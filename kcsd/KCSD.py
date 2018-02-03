@@ -15,8 +15,8 @@ import numpy as np
 from scipy import special, integrate, interpolate
 from scipy.spatial import distance
 from numpy.linalg import LinAlgError
-import utility_functions as utils
-import basis_functions as basis
+from kcsd import utility_functions as utils
+from kcsd import basis_functions as basis
 
 # from . import utility_functions as utils
 # from . import basis_functions as basis
@@ -227,7 +227,8 @@ class KCSD(CSD):
         elif estimate == 'POT':
             estimation_table = self.k_interp_pot
         else:
-            print('Invalid quantity to be measured, pass either CSD or POT')
+            raise NameError('Invalid quantity to be measured, pass either CSD or POT')
+
         k_inv = np.linalg.inv(self.k_pot + self.lambd *
                               np.identity(self.k_pot.shape[0]))
         estimation = np.zeros((self.n_estm, self.n_time))
