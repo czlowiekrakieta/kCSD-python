@@ -17,13 +17,16 @@ from scipy.spatial import distance
 from numpy.linalg import LinAlgError
 from kcsd import utility_functions as utils
 from kcsd import basis_functions as basis
+from kcsd.optimizers import opt_zoo
 
 # from . import utility_functions as utils
 # from . import basis_functions as basis
 try:
     from skmonaco import mcmiser
+
     skmonaco_available = True
     import multiprocessing
+
     num_cores = multiprocessing.cpu_count()
 except ImportError:
     skmonaco_available = False
@@ -31,6 +34,7 @@ except ImportError:
 
 class CSD(object):
     """CSD - The base class for CSD methods."""
+
     def __init__(self, ele_pos, pots):
         self.validate(ele_pos, pots)
         self.ele_pos = ele_pos
@@ -53,9 +57,9 @@ class CSD(object):
         if ele_pos.shape[0] != pots.shape[0]:
             raise Exception("Number of measured potentials is not equal "
                             "to electrode number!")
-        if ele_pos.shape[0] < 1+ele_pos.shape[1]:  # Dim+1
+        if ele_pos.shape[0] < 1 + ele_pos.shape[1]:  # Dim+1
             raise Exception("Number of electrodes must be at least :",
-                            1+ele_pos.shape[1])
+                            1 + ele_pos.shape[1])
         if utils.check_for_duplicated_electrodes(ele_pos) is False:
             raise Exception("Error! Duplicated electrode!")
 
@@ -87,6 +91,7 @@ class KCSD(CSD):
     The method implented here is based on the original paper
     by Jan Potworowski et.al. 2012.
     """
+
     def __init__(self, ele_pos, pots, **kwargs):
         super(KCSD, self).__init__(ele_pos, pots)
         self.parameters(**kwargs)
@@ -111,17 +116,21 @@ class KCSD(CSD):
         self.ext_x = kwargs.pop('ext_x', 0.0)
         self.xmin = kwargs.pop('xmin', np.min(self.ele_pos[:, 0]))
         self.xmax = kwargs.pop('xmax', np.max(self.ele_pos[:, 0]))
-        self.gdx = kwargs.pop('gdx', 0.01*(self.xmax - self.xmin))
+        self.gdx = kwargs.pop('gdx', 0.01 * (self.xmax - self.xmin))
+        self.max_iters = kwargs.pop('max_iters', 100)
+        self.tol = kwargs.pop('tol', 1e-2)
+        self.alpha = kwargs.pop('alpha', 0.0)
+        self.reg_method = kwargs.pop('reg_method', 'ridge')
         if self.dim >= 2:
             self.ext_y = kwargs.pop('ext_y', 0.0)
             self.ymin = kwargs.pop('ymin', np.min(self.ele_pos[:, 1]))
             self.ymax = kwargs.pop('ymax', np.max(self.ele_pos[:, 1]))
-            self.gdy = kwargs.pop('gdy', 0.01*(self.ymax - self.ymin))
+            self.gdy = kwargs.pop('gdy', 0.01 * (self.ymax - self.ymin))
         if self.dim == 3:
             self.ext_z = kwargs.pop('ext_z', 0.0)
             self.zmin = kwargs.pop('zmin', np.min(self.ele_pos[:, 2]))
             self.zmax = kwargs.pop('zmax', np.max(self.ele_pos[:, 2]))
-            self.gdz = kwargs.pop('gdz', 0.01*(self.zmax - self.zmin))
+            self.gdz = kwargs.pop('gdz', 0.01 * (self.zmax - self.zmin))
         if kwargs:
             raise TypeError('Invalid keyword arguments:', kwargs.keys())
 
@@ -134,10 +143,10 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.create_lookup()                                # Look up table
-        self.update_b_pot()                                 # update kernel
-        self.update_b_src()                                 # update crskernel
-        self.update_b_interp_pot()                          # update pot interp
+        self.create_lookup()  # Look up table
+        self.update_b_pot()  # update kernel
+        self.update_b_src()  # update crskernel
+        self.update_b_interp_pot()  # update pot interp
 
     def create_lookup(self, dist_table_density=20):
         """Creates a table for easy potential estimation from CSD.
@@ -151,7 +160,7 @@ class KCSD(CSD):
             number of distance values at which potentials are computed.
             Default 100
         """
-        xs = np.logspace(0., np.log10(self.dist_max+1.), dist_table_density)
+        xs = np.logspace(0., np.log10(self.dist_max + 1.), dist_table_density)
         xs = xs - 1.0  # starting from 0
         dist_table = np.zeros(len(xs))
         for i, pos in enumerate(xs):
@@ -235,7 +244,7 @@ class KCSD(CSD):
         for t in range(self.n_time):
             beta = np.dot(k_inv, self.pots[:, t])
             for i in range(self.n_ele):
-                estimation[:, t] += estimation_table[:, i]*beta[i]  # C*(x) Eq 18
+                estimation[:, t] += estimation_table[:, i] * beta[i]  # C*(x) Eq 18
         return self.process_estimate(estimation)
 
     def process_estimate(self, estimation):
@@ -280,61 +289,91 @@ class KCSD(CSD):
         """
         self.lambd = lambd
 
-    def cross_validate(self, lambdas=None, Rs=None):
+    def cross_validate(self, lambdas=None, Rs=None, alphas=None):
         """Method defines the cross validation.
-        By default only cross_validates over lambda,
+        By default only cross_validates over lambda and alpha,
         When no argument is passed, it takes
         lambdas = np.logspace(-2,-25,25,base=10.)
         and Rs = np.array(self.R).flatten()
         otherwise pass necessary numpy arrays
 
+        Lambda and alpha are respectively L2 and L1 regularization parameters.
+
         Parameters
         ----------
-        lambdas : numpy array
-        Rs : numpy array
+        lambdas : np.ndarray
+        Rs : np.ndarray
+        alphas : np.ndarray
 
         Returns
         -------
         R : post cross validation
         Lambda : post cross validation
+        Alpha : post cross validation
         """
-        if lambdas is None:                           # when None
+        if lambdas is None:  # when None
             print('No lambda given, using defaults')
-            lambdas = np.logspace(-2,-25,25,base=10.) # Default multiple lambda
-            lambdas = np.hstack((lambdas, np.array((0.0))))
-        elif lambdas.size == 1:                       # resize when one entry
+            lambdas = np.logspace(-2, -25, 25, base=10.)  # Default multiple lambda
+            lambdas = np.hstack((lambdas, np.array([0.0])))
+        elif lambdas.size == 1:  # resize when one entry
             lambdas = lambdas.flatten()
-        if Rs is None:                                # when None
-            Rs = np.array((self.R)).flatten()         # Default over one R value
-        errs = np.zeros((Rs.size, lambdas.size))
+
+        if self.reg_method == 'elasticnet':
+            if alphas is None:
+                print('No alpha given, using defaults')
+                alphas = np.logspace(-2, -25, 25, base=10.)
+                alphas = np.hstack((alphas, np.array([0.0])))
+            elif alphas.size == 1:
+                alphas = alphas.flatten()
+        else:
+            alphas = np.array([0.0])
+
+        if Rs is None:  # when None
+            Rs = np.array((self.R)).flatten()  # Default over one R value
+        errs = np.zeros((Rs.size, lambdas.size, alphas.size))
         index_generator = []
+        """
+        Łukasz Mądry: nazwa generator jest nieco myląca, bo (jak pewnie wiecie) 
+        generator to specyficzny, leniwy, Pythonowy iterator, zaś tutaj mamy do czynienia ze zwykłą listą.
+        """
         for ii in range(self.n_ele):
             idx_test = [ii]
             idx_train = list(range(self.n_ele))
-            idx_train.remove(ii)                      # Leave one out
+            idx_train.remove(ii)  # Leave one out
             index_generator.append((idx_train, idx_test))
-        for R_idx, R in enumerate(Rs):                # Iterate over R
+        for R_idx, R in enumerate(Rs):  # Iterate over R
             self.update_R(R)
             print('Cross validating R (all lambda) :', R)
             for lambd_idx, lambd in enumerate(lambdas):  # Iterate over lambdas
-                errs[R_idx, lambd_idx] = self.compute_cverror(lambd,
-                                                              index_generator)
-        err_idx = np.where(errs == np.min(errs))     # Index of the least error
-        cv_R = Rs[err_idx[0]][0]      # First occurance of the least error's
+                for alpha_idx, alpha in enumerate(alphas): # Iterate over alphas
+                    errs[R_idx, lambd_idx, alpha_idx] = self.compute_cverror(lambd,
+                                                                             alpha,
+                                                                             index_generator)
+        err_idx = np.where(errs == np.min(errs))  # Index of the least error
+        cv_R = Rs[err_idx[0]][0]  # First occurance of the least error's
         cv_lambda = lambdas[err_idx[1]][0]
+        cv_alpha = alphas[err_idx[2]][0]
         self.cv_error = np.min(errs)  # otherwise is None
-        self.update_R(cv_R)           # Update solver
+        self.update_R(cv_R)  # Update solver
         self.update_lambda(cv_lambda)
-        print('R, lambda :', cv_R, cv_lambda)
-        return cv_R, cv_lambda
+        if self.reg_method == 'ridge':
+            print('R, lambda :', cv_R, cv_lambda)
+            return cv_R, cv_lambda
+        elif self.reg_method == 'elasticnet':
+            print('R, lambda, alpha :', cv_R, cv_lambda, cv_alpha)
+            return cv_R, cv_lambda, cv_alpha
+        else:
+            print('R, alpha : ', cv_R, cv_alpha)
+            return cv_R, cv_alpha
 
-    def compute_cverror(self, lambd, index_generator):
+    def compute_cverror(self, lambd, alpha, index_generator):
         """Useful for Cross validation error calculations
 
         Parameters
         ----------
         lambd : float
         index_generator : list
+        alpha : float
 
         Returns
         -------
@@ -347,19 +386,22 @@ class KCSD(CSD):
             V_train = self.pots[idx_train]
             V_test = self.pots[idx_test]
             I_matrix = np.identity(len(idx_train))
-            B_new = np.matrix(B_train) + (lambd*I_matrix)
+            B_new = np.matrix(B_train) + (lambd * I_matrix)
             try:
-                beta_new = np.dot(np.matrix(B_new).I, np.matrix(V_train))
+                beta_new = opt_zoo[self.reg_method](np.matrix(B_new), np.matrix(V_train),
+                                                    ridge_reg=lambd, lasso_reg=alpha,
+                                                    tol=self.tol, max_iters=self.max_iters)
+                # beta_new = np.dot(np.matrix(B_new).I, np.matrix(V_train))
                 B_test = self.k_pot[np.ix_(idx_test, idx_train)]
                 V_est = np.zeros((len(idx_test), self.pots.shape[1]))
                 for ii in range(len(idx_train)):
                     for tt in range(self.pots.shape[1]):
                         V_est[:, tt] += beta_new[ii, tt] * B_test[:, ii]
-                err += np.linalg.norm(V_est-V_test)
+                err += np.square(V_est - V_test).sum()
             except LinAlgError:
                 raise LinAlgError('Encoutered Singular Matrix Error:'
                                   'try changing ele_pos slightly')
-        return err
+        return np.sqrt(err)
 
 
 class KCSD1D(KCSD):
@@ -370,6 +412,7 @@ class KCSD1D(KCSD):
     electrodes (laminar probes). The method implented here is based on the
     original paper by Jan Potworowski et.al. 2012.
     """
+
     def __init__(self, ele_pos, pots, **kwargs):
         """Initialize KCSD1D Class.
 
@@ -429,7 +472,7 @@ class KCSD1D(KCSD):
         ----------
         None
         """
-        nx = (self.xmax - self.xmin)/self.gdx
+        nx = (self.xmax - self.xmin) / self.gdx
         self.estm_x = np.mgrid[self.xmin:self.xmax:np.complex(0, nx)]
         self.n_estm = self.estm_x.size
         self.ngx = self.estm_x.shape[0]
@@ -474,7 +517,7 @@ class KCSD1D(KCSD):
         est_loc = np.array((self.estm_x.ravel()))
         est_loc = est_loc.reshape((len(est_loc), 1))
         self.src_ele_dists = distance.cdist(src_loc, self.ele_pos, 'euclidean')
-        self.src_estm_dists = distance.cdist(src_loc, est_loc,  'euclidean')
+        self.src_estm_dists = distance.cdist(src_loc, est_loc, 'euclidean')
         self.dist_max = max(np.max(self.src_ele_dists),
                             np.max(self.src_estm_dists)) + self.R
 
@@ -499,7 +542,7 @@ class KCSD1D(KCSD):
         pot, err = integrate.quad(self.int_pot_1D,
                                   -R, R,
                                   args=(x, R, h, src_type))
-        pot *= 1./(2.0*sigma)
+        pot *= 1. / (2.0 * sigma)
         return pot
 
     def int_pot_1D(self, xp, x, R, h, basis_func):
@@ -527,7 +570,7 @@ class KCSD1D(KCSD):
         -------
         pot : float
         """
-        m = np.sqrt((x-xp)**2 + h**2) - abs(x-xp)
+        m = np.sqrt((x - xp) ** 2 + h ** 2) - abs(x - xp)
         m *= basis_func(abs(xp), R)  # xp is the distance
         return m
 
@@ -540,6 +583,7 @@ class KCSD2D(KCSD):
     electrodes. The method implented here is based on the original paper
     by Jan Potworowski et.al. 2012.
     """
+
     def __init__(self, ele_pos, pots, **kwargs):
         """Initialize KCSD2D Class.
 
@@ -602,10 +646,10 @@ class KCSD2D(KCSD):
         ----------
         None
         """
-        nx = (self.xmax - self.xmin)/self.gdx
-        ny = (self.ymax - self.ymin)/self.gdy
-        self.estm_x, self.estm_y = np.mgrid[self.xmin:self.xmax:np.complex(0, nx), 
-                                            self.ymin:self.ymax:np.complex(0, ny)]
+        nx = (self.xmax - self.xmin) / self.gdx
+        ny = (self.ymax - self.ymin) / self.gdy
+        self.estm_x, self.estm_y = np.mgrid[self.xmin:self.xmax:np.complex(0, nx),
+                                   self.ymin:self.ymax:np.complex(0, ny)]
         self.n_estm = self.estm_x.size
         self.ngx, self.ngy = self.estm_x.shape
 
@@ -635,7 +679,7 @@ class KCSD2D(KCSD):
                                                                     self.n_src_init,
                                                                     self.ext_x,
                                                                     self.ext_y,
-                                                                    self.R_init) 
+                                                                    self.R_init)
         self.n_src = self.src_x.size
         self.nsx, self.nsy = self.src_x.shape
 
@@ -675,7 +719,7 @@ class KCSD2D(KCSD):
                                      lambda x: -R,
                                      lambda x: R,
                                      args=(x, R, h, src_type))
-        pot *= 1./(2.0*np.pi*sigma)  # Potential basis functions bi_x_y
+        pot *= 1. / (2.0 * np.pi * sigma)  # Potential basis functions bi_x_y
         return pot
 
     def int_pot_2D(self, xp, yp, x, R, h, basis_func):
@@ -702,11 +746,11 @@ class KCSD2D(KCSD):
         -------
         pot : float
         """
-        y = ((x-xp)**2 + yp**2)**(0.5)
+        y = ((x - xp) ** 2 + yp ** 2) ** (0.5)
         if y < 0.00001:
             y = 0.00001
-        dist = np.sqrt(xp**2 + yp**2)
-        pot = np.arcsinh(h/y)*basis_func(dist, R)
+        dist = np.sqrt(xp ** 2 + yp ** 2)
+        pot = np.arcsinh(h / y) * basis_func(dist, R)
         return pot
 
 
@@ -719,6 +763,7 @@ class MoIKCSD(KCSD2D):
     The method implented here is based on kCSD method by Jan Potworowski
     et.al. 2012, which was extended in Ness, Chintaluri 2015 for MEA.
     """
+
     def __init__(self, ele_pos, pots, **kwargs):
         """Initialize MoIKCSD Class.
 
@@ -772,7 +817,7 @@ class MoIKCSD(KCSD2D):
         self.sigma = kwargs.pop('sigma', 1.0)
         W_TS = (self.sigma - self.sigma_S) / (self.sigma + self.sigma_S)
         self.iters = np.arange(self.MoI_iters) + 1  # Eq 6, Ness (2015)
-        self.iter_factor = W_TS**self.iters
+        self.iter_factor = W_TS ** self.iters
         super(MoIKCSD, self).__init__(ele_pos, pots, **kwargs)
 
     def forward_model(self, x, R, h, sigma, src_type):
@@ -797,7 +842,7 @@ class MoIKCSD(KCSD2D):
                                      lambda x: -R,
                                      lambda x: R,
                                      args=(x, R, h, src_type))
-        pot *= 1./(2.0*np.pi*sigma)
+        pot *= 1. / (2.0 * np.pi * sigma)
         return pot
 
     def int_pot_2D_moi(self, xp, yp, x, R, h, basis_func):
@@ -825,12 +870,12 @@ class MoIKCSD(KCSD2D):
         -------
         pot : float
         """
-        L = ((x-xp)**2 + yp**2)**(0.5)
+        L = ((x - xp) ** 2 + yp ** 2) ** (0.5)
         if L < 0.00001:
             L = 0.00001
-        correction = np.arcsinh((h-(2*h*self.iters))/L) + np.arcsinh((h+(2*h*self.iters))/L)
-        pot = np.arcsinh(h/L) + np.sum(self.iter_factor*correction)
-        dist = np.sqrt(xp**2 + yp**2)
+        correction = np.arcsinh((h - (2 * h * self.iters)) / L) + np.arcsinh((h + (2 * h * self.iters)) / L)
+        pot = np.arcsinh(h / L) + np.sum(self.iter_factor * correction)
+        dist = np.sqrt(xp ** 2 + yp ** 2)
         pot *= basis_func(dist, R)  # Eq 20, Ness et.al.
         return pot
 
@@ -843,6 +888,7 @@ class KCSD3D(KCSD):
     electrodes. The method implented here is based on the original paper
     by Jan Potworowski et.al. 2012.
     """
+
     def __init__(self, ele_pos, pots, **kwargs):
         """Initialize KCSD3D Class.
 
@@ -909,12 +955,12 @@ class KCSD3D(KCSD):
         ----------
         None
         """
-        nx = (self.xmax - self.xmin)/self.gdx
-        ny = (self.ymax - self.ymin)/self.gdy
-        nz = (self.zmax - self.zmin)/self.gdz
-        self.estm_x, self.estm_y, self.estm_z = np.mgrid[self.xmin:self.xmax:np.complex(0, nx), 
-                                                         self.ymin:self.ymax:np.complex(0, ny),
-                                                         self.zmin:self.zmax:np.complex(0, nz)]
+        nx = (self.xmax - self.xmin) / self.gdx
+        ny = (self.ymax - self.ymin) / self.gdy
+        nz = (self.zmax - self.zmin) / self.gdz
+        self.estm_x, self.estm_y, self.estm_z = np.mgrid[self.xmin:self.xmax:np.complex(0, nx),
+                                                self.ymin:self.ymax:np.complex(0, ny),
+                                                self.zmin:self.zmax:np.complex(0, nz)]
         self.n_estm = self.estm_x.size
         self.ngx, self.ngy, self.ngz = self.estm_x.shape
 
@@ -989,26 +1035,26 @@ class KCSD3D(KCSD):
             value of potential at specified distance from the source
         """
         if src_type.__name__ == "gauss_3D":
-            if x == 0: x=0.0001
-            pot = special.erf(x/(np.sqrt(2)*R/3.0)) / x
+            if x == 0: x = 0.0001
+            pot = special.erf(x / (np.sqrt(2) * R / 3.0)) / x
         elif src_type.__name__ == "gauss_lim_3D":
-            if x == 0: x=0.0001
-            d = R/3.
+            if x == 0: x = 0.0001
+            d = R / 3.
             if x < R:
-                e = np.exp(-(x / (np.sqrt(2)*d))**2)
-                erf = special.erf(x / (np.sqrt(2)*d))
-                pot = 4*np.pi * ((d**2)*(e - np.exp(-4.5)) +
-                                 (1/x)*((np.sqrt(np.pi/2)*(d**3)*erf) - x*(d**2)*e))
+                e = np.exp(-(x / (np.sqrt(2) * d)) ** 2)
+                erf = special.erf(x / (np.sqrt(2) * d))
+                pot = 4 * np.pi * ((d ** 2) * (e - np.exp(-4.5)) +
+                                   (1 / x) * ((np.sqrt(np.pi / 2) * (d ** 3) * erf) - x * (d ** 2) * e))
             else:
-                pot = 15.28828*(d)**3 / x
-            pot /= (np.sqrt(2*np.pi)*d)**3
+                pot = 15.28828 * (d) ** 3 / x
+            pot /= (np.sqrt(2 * np.pi) * d) ** 3
         elif src_type.__name__ == "step_3D":
-            Q = 4.*np.pi*(R**3)/3.
+            Q = 4. * np.pi * (R ** 3) / 3.
             if x < R:
-                pot = (Q * (3 - (x/R)**2)) / (2.*R)
+                pot = (Q * (3 - (x / R) ** 2)) / (2. * R)
             else:
                 pot = Q / x
-            pot *= 3/(4*np.pi*R**3)
+            pot *= 3 / (4 * np.pi * R ** 3)
         else:
             if skmonaco_available:
                 pot, err = mcmiser(self.int_pot_3D_mc,
@@ -1027,7 +1073,7 @@ class KCSD3D(KCSD):
                                              lambda x, y: -R,
                                              lambda x, y: R,
                                              args=(x, R, h, src_type))
-        pot *= 1./(4.0*np.pi*sigma)
+        pot *= 1. / (4.0 * np.pi * sigma)
         return pot
 
     def int_pot_3D(self, xp, yp, zp, x, R, h, basis_func):
@@ -1054,11 +1100,11 @@ class KCSD3D(KCSD):
         -------
         pot : float
         """
-        y = ((x-xp)**2 + yp**2 + zp**2)**0.5
+        y = ((x - xp) ** 2 + yp ** 2 + zp ** 2) ** 0.5
         if y < 0.00001:
             y = 0.00001
-        dist = np.sqrt(xp**2 + yp**2 + zp**2)
-        pot = 1.0/y
+        dist = np.sqrt(xp ** 2 + yp ** 2 + zp ** 2)
+        pot = 1.0 / y
         pot *= basis_func(dist, R)
         return pot
 
@@ -1098,9 +1144,9 @@ if __name__ == '__main__':
     pots = np.array([[-1], [-1], [-1], [0], [0], [1], [-1.5]])
     k = KCSD1D(ele_pos, pots,
                gdx=0.01, n_src_init=300,
-               ext_x=0.0, src_type='gauss')
+               ext_x=0.0, src_type='gauss', reg_method='elasticnet', max_iters=2)
     k.cross_validate()
-    print(k.values())
+    # print(k.values())
 
     print('Checking 2D')
     ele_pos = np.array([[-0.2, -0.2], [0, 0], [0, 1], [1, 0], [1, 1],
@@ -1112,7 +1158,7 @@ if __name__ == '__main__':
                ymin=-2.0, ymax=2.0,
                src_type='gauss')
     k.cross_validate()
-    print(k.values())
+    # print(k.values())
 
     print('Checking MoIKCSD')
     k = MoIKCSD(ele_pos, pots,
@@ -1130,4 +1176,4 @@ if __name__ == '__main__':
                gdx=0.02, gdy=0.02, gdz=0.02,
                n_src_init=1000, src_type='gauss_lim')
     k.cross_validate()
-    print(k.values())
+    # print(k.values())

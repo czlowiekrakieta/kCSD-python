@@ -31,7 +31,7 @@ def gauss(d, stdev, dim):
     Z : floats or np.arrays
         function evaluated
     """
-    Z = np.exp(-(d**2) / (2* stdev**2) ) / (np.sqrt(2*np.pi)*stdev)**dim
+    Z = np.exp(-(d**2) / (2*stdev**2)) / (np.sqrt(2*np.pi)*stdev)**dim
     return Z
 
 def step_1D(d, R):
