@@ -1,5 +1,6 @@
 import numpy as np
 
+from kcsd import KCSD1D
 from kcsd.potentials import generate_csd, calculate_potential
 from kcsd.csd_profile import csd_available_dict
 
@@ -9,10 +10,16 @@ measure_locations = np.linspace(.3, .8, num=25)
 
 potentials = calculate_potential(csd_at, csd_profile, measure_locations, 1)
 
-from kcsd import KCSD1D
 
-kcsd = KCSD1D(measure_locations.reshape(-1, 1), potentials, reg_method='elasticnet')
+kcsd = KCSD1D(measure_locations.reshape(-1, 1), potentials, reg_method='lasso')
 
 kcsd.cross_validate()
 
-kcsd.goodness_of_fit(csd_profile)
+print(kcsd.goodness_of_fit(csd_profile))
+
+
+kcsd = KCSD1D(measure_locations.reshape(-1, 1), potentials, reg_method='ridge')
+
+kcsd.cross_validate()
+
+print(kcsd.goodness_of_fit(csd_profile))

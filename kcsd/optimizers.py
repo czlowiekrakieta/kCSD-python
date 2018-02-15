@@ -12,7 +12,7 @@ def soft_threshold(x, a):
         return x + a
 
 
-def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3):
+def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3, ret_loss=False):
     """
     Computes ElasticNet estimates for kCSD method
 
@@ -39,21 +39,27 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3):
 
     beta = np.zeros((X.shape[1], 1))
     prev_loss = np.inf
+    losses = []
     for i in range(max_iters):
         for j in range(X.shape[1]):
             temp_beta = deepcopy(beta)
             temp_beta[j] = 0.0
 
             resid = y - np.matmul(X, temp_beta)
-            numerator = soft_threshold(np.dot(X[:, j].T, resid), lasso_reg)
+            numerator = soft_threshold(np.multiply(X[:, j], resid).sum(), X.shape[0]*lasso_reg)
             denominator = norms[j] + ridge_reg
 
-            beta[j] = 2 * numerator / denominator
+            # print("num: ", numerator, "denom: ", denominator)
+
+            beta[j] = numerator / denominator
 
         loss = np.square(y - np.matmul(X, beta)).sum()
+        losses.append(loss)
         if prev_loss - loss < tol:
             break
         prev_loss = loss
+    if ret_loss:
+        return beta, losses
 
     return beta
 
