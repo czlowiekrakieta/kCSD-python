@@ -15,6 +15,9 @@ from __future__ import division
 import numpy as np
 from scipy import interpolate
 
+class NotFittedError(Exception):
+    pass
+
 def check_for_duplicated_electrodes(elec_pos):
     """Checks for duplicate electrodes
 
@@ -29,6 +32,7 @@ def check_for_duplicated_electrodes(elec_pos):
     unique_elec_pos = np.vstack({tuple(row) for row in elec_pos})
     has_duplicated_elec = unique_elec_pos.shape == elec_pos.shape
     return has_duplicated_elec
+
 
 def distribute_srcs_1D(X, n_src, ext_x, R_init):
     """Distribute sources in 1D equally spaced
@@ -54,6 +58,7 @@ def distribute_srcs_1D(X, n_src, ext_x, R_init):
     X_src = np.mgrid[(np.min(X)-ext_x):(np.max(X)+ext_x):np.complex(0,n_src)]
     R = R_init
     return X_src, R
+
 
 def distribute_srcs_2D(X, Y, n_src, ext_x, ext_y, R_init):
     """Distribute n_src's in the given area evenly
@@ -93,6 +98,7 @@ def distribute_srcs_2D(X, Y, n_src, ext_x, ext_y, R_init):
     R = R_init
     return X_src, Y_src, R
 
+
 def get_src_params_2D(Lx, Ly, n_src):
     """Distribute n_src sources evenly in a rectangle of size Lx * Ly
 
@@ -125,6 +131,7 @@ def get_src_params_2D(Lx, Ly, n_src):
     Lx_n = (nx - 1) * ds
     Ly_n = (ny - 1) * ds
     return (nx, ny, Lx_n, Ly_n, ds)
+
 
 def distribute_srcs_3D(X, Y, Z, n_src, ext_x, ext_y, ext_z, R_init):
     """Distribute n_src sources evenly in a rectangle of size Lx * Ly * Lz
@@ -171,6 +178,7 @@ def distribute_srcs_3D(X, Y, Z, n_src, ext_x, ext_y, ext_z, R_init):
     d = np.round(R_init/ds)
     R = R_init
     return (X_src, Y_src, Z_src, R)
+
 
 def get_src_params_3D(Lx, Ly, Lz, n_src):
     """Helps to evenly distribute n_src sources in a cuboid of size Lx * Ly * Lz

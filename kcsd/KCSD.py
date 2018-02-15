@@ -10,6 +10,7 @@ KCSD1D[1][2], KCSD2D[1], KCSD3D[1], MoIKCSD[1]
 
 """
 from __future__ import division
+from abc import abstractmethod
 
 import numpy as np
 from scipy import special, integrate, interpolate
@@ -78,9 +79,16 @@ class CSD(object):
         -------
         RMSE : root mean squared difference
         """
-        csd = self.values(pos_csd)
-        RMSE = np.sqrt(np.mean(np.square(true_csd - csd)))
+        RMSE = np.sqrt(np.mean(np.square(true_csd - pos_csd)))
         return RMSE
+
+    @abstractmethod
+    def values(self):
+        raise NotImplementedError
+
+    def goodness_of_fit(self, true_csd):
+        estimated_csd = self.values()
+        return np.sqrt(np.mean(np.square(true_csd - estimated_csd)))
 
 
 class KCSD(CSD):
@@ -99,6 +107,7 @@ class KCSD(CSD):
         self.place_basis()
         self.create_src_dist_tables()
         self.method()
+        self.fitted = False
 
     def parameters(self, **kwargs):
         """Defining the default values of the method passed as kwargs
@@ -187,6 +196,7 @@ class KCSD(CSD):
         self.b_pot = self.interpolate_pot_at(self.src_ele_dists)
         self.k_pot = np.dot(self.b_pot.T, self.b_pot)  # K(x,x') Eq9,Jan2012
         self.k_pot /= self.n_src
+        # self.k_pot = np.matrix(self.k_pot)
 
     def update_b_src(self):
         """Updates the b_src in the shape of (#_est_pts, #_basis_sources)
@@ -238,14 +248,22 @@ class KCSD(CSD):
         else:
             raise NameError('Invalid quantity to be measured, pass either CSD or POT')
 
-        k_inv = np.linalg.inv(self.k_pot + self.lambd *
-                              np.identity(self.k_pot.shape[0]))
-        estimation = np.zeros((self.n_estm, self.n_time))
-        for t in range(self.n_time):
-            beta = np.dot(k_inv, self.pots[:, t])
-            for i in range(self.n_ele):
-                estimation[:, t] += estimation_table[:, i] * beta[i]  # C*(x) Eq 18
-        return self.process_estimate(estimation)
+        if not self.fitted:
+            raise utils.NotFittedError("You are trying to get optimal values without "
+                                       "having found optimal hyperparameters (lambda, alpha)")
+
+        beta = opt_zoo[self.reg_method](np.matrix(self.k_pot), self.pots,
+                                        lasso_reg=self.alpha, ridge_reg=self.lambd,
+                                        max_iters=self.max_iters, tol=self.tol)
+        # estimation = np.zeros((self.n_estm, self.n_time))
+        # # to zupelnie nie tak, jesli korzystamy z roznej od L2 metody,
+        # for t in range(self.n_time):
+        #     beta = np.dot(k_inv, self.pots[:, t])  # ŁM: nie rozumiem?
+        #     for i in range(self.n_ele):
+        #         estimation[:, t] += estimation_table[:, i] * beta[i]  # C*(x) Eq 18
+        # return self.process_estimate(estimation)
+
+        return np.matmul(estimation_table, beta)
 
     def process_estimate(self, estimation):
         """Function used to rearrange estimation according to dimension, to be
@@ -287,9 +305,32 @@ class KCSD(CSD):
         ----------
         lambd : float
         """
-        self.lambd = lambd
+        self._lambd = lambd
 
-    def cross_validate(self, lambdas=None, Rs=None, alphas=None):
+    def update_alpha(self, alpha):
+        self._alpha = alpha
+
+    @property
+    def lambd(self):
+        if not self.fitted:
+            raise utils.NotFittedError
+        return self._lambd
+
+    @lambd.setter
+    def lambd(self, val):
+        self._lambd = val
+
+    @property
+    def alpha(self):
+        if not self.fitted:
+            raise utils.NotFittedError
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, val):
+        self._alpha = val
+
+    def cross_validate(self, lambdas=None, Rs=None, alphas=None, param_search='grid'):
         """Method defines the cross validation.
         By default only cross_validates over lambda and alpha,
         When no argument is passed, it takes
@@ -298,6 +339,8 @@ class KCSD(CSD):
         otherwise pass necessary numpy arrays
 
         Lambda and alpha are respectively L2 and L1 regularization parameters.
+
+        TODO: allow to do random search instead of grid search
 
         Parameters
         ----------
@@ -356,6 +399,8 @@ class KCSD(CSD):
         self.cv_error = np.min(errs)  # otherwise is None
         self.update_R(cv_R)  # Update solver
         self.update_lambda(cv_lambda)
+        self.update_alpha(cv_alpha)
+        self.fitted = True
         if self.reg_method == 'ridge':
             print('R, lambda :', cv_R, cv_lambda)
             return cv_R, cv_lambda
@@ -397,11 +442,11 @@ class KCSD(CSD):
                 for ii in range(len(idx_train)):
                     for tt in range(self.pots.shape[1]):
                         V_est[:, tt] += beta_new[ii, tt] * B_test[:, ii]
-                err += np.square(V_est - V_test).sum()
+                err += np.linalg.norm(V_est - V_test)  #np.square(V_est - V_test).sum()
             except LinAlgError:
                 raise LinAlgError('Encoutered Singular Matrix Error:'
                                   'try changing ele_pos slightly')
-        return np.sqrt(err)
+        return err
 
 
 class KCSD1D(KCSD):

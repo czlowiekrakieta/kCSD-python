@@ -34,6 +34,9 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3):
         fitted coefficients
     """
 
+    norms = np.square(X).sum(axis=0)
+    norms = np.array(norms).flatten()
+
     beta = np.zeros((X.shape[1], 1))
     prev_loss = np.inf
     for i in range(max_iters):
@@ -43,7 +46,7 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3):
 
             resid = y - np.matmul(X, temp_beta)
             numerator = soft_threshold(np.dot(X[:, j].T, resid), lasso_reg)
-            denominator = np.square(X[:, j]).sum() + ridge_reg
+            denominator = norms[j] + ridge_reg
 
             beta[j] = 2 * numerator / denominator
 
@@ -55,7 +58,7 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3):
     return beta
 
 
-def compute_lasso(X, y, lasso_reg, max_iters, tol=1e-3, **kwargs):
+def compute_lasso(X, y, lasso_reg, max_iters, tol=1e-3, *args, **kwargs):
     """
     Computes LASSO estimates for kCSD method, using ElasticNet with ridge parameter equal to zero.
     Nothing more than a wrapper function.
@@ -76,7 +79,7 @@ def compute_lasso(X, y, lasso_reg, max_iters, tol=1e-3, **kwargs):
     return compute_elasticnet(X, y, lasso_reg=lasso_reg, ridge_reg=0, max_iters=max_iters, tol=tol)
 
 
-def compute_ridge(X, y, ridge_reg, **kwargs):
+def compute_ridge(X, y, ridge_reg, *args, **kwargs):
     """
     Computes ridge regression estimates in a closed-form solution.
     If you want to do it using coordinate descent algorithm, simply call
@@ -96,6 +99,7 @@ def compute_ridge(X, y, ridge_reg, **kwargs):
     identity = np.identity(X.shape[0])
     B = X + ridge_reg*identity
     return np.dot(B.I, np.matrix(y))
+
 
 opt_zoo = {
     'ridge': compute_ridge,
