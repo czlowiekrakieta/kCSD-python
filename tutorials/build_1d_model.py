@@ -11,7 +11,7 @@ measure_locations = np.linspace(.3, .8, num=25)
 potentials = calculate_potential(csd_at, csd_profile, measure_locations, 1)
 
 
-kcsd = KCSD1D(measure_locations.reshape(-1, 1), potentials, reg_method='lasso')
+kcsd = KCSD1D(measure_locations.reshape(-1, 1), potentials, reg_method='elasticnet')
 
 kcsd.cross_validate()
 

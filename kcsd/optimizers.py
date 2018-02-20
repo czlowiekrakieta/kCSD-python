@@ -49,8 +49,6 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3, ret_loss
             numerator = soft_threshold(np.multiply(X[:, j], resid).sum(), X.shape[0]*lasso_reg)
             denominator = norms[j] + ridge_reg
 
-            # print("num: ", numerator, "denom: ", denominator)
-
             beta[j] = numerator / denominator
 
         loss = np.square(y - np.matmul(X, beta)).sum()

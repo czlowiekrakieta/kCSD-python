@@ -262,7 +262,7 @@ class KCSD(CSD):
         #     for i in range(self.n_ele):
         #         estimation[:, t] += estimation_table[:, i] * beta[i]  # C*(x) Eq 18
         # return self.process_estimate(estimation)
-
+        #
         return np.matmul(estimation_table, beta)
 
     def process_estimate(self, estimation):

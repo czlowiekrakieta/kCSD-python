@@ -37,7 +37,7 @@ def add_1d_gaussians(x, states):
     for i in range(states.shape[0]):
         gauss = states[i, 0]*np.exp(-((x-states[i, 1])**2)/(2.*states[i, 2]))*(2*np.pi*states[i, 2])**-0.5
         f += gauss
-    #f *= np.hanning(gauss.size) #while this is cool in principle, its unpredictable
+    # f *= np.hanning(gauss.size) while this is cool in principle, its unpredictable
     return f
 
 
