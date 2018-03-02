@@ -18,6 +18,7 @@ from scipy import interpolate
 class NotFittedError(Exception):
     pass
 
+
 def check_for_duplicated_electrodes(elec_pos):
     """Checks for duplicate electrodes
 

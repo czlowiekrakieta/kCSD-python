@@ -1,6 +1,6 @@
 
 import numpy as np
-from kcsd.csd_profile import csd_available_dict
+from kcsd.csd_profile import csd_available_dict, add_2d_gaussians, add_1d_gaussians
 from scipy.integrate import simps
 
 
@@ -65,7 +65,7 @@ def integrate_1D(x0, csd_x, csd, h):
     return I
 
 
-def integrate_2D(x, y, xlim, ylim, csd, h, xlin, ylin, X, Y):
+def integrate_2D(x, y, csd, h, xlin, ylin, X, Y):
     """
     X,Y - parts of meshgrid - Mihav's implementation
     """
@@ -124,8 +124,7 @@ def calculate_potential(csd_at, csd, measure_locations, h, sigma=1.):
         ele_yy = measure_locations[:, 1]
         pots = np.zeros(num_ele)
         for ii in range(num_ele):
-            pots[ii] = integrate_2D(ele_xx[ii], ele_yy[ii],
-                                    xlims, ylims, csd, h,
+            pots[ii] = integrate_2D(ele_xx[ii], ele_yy[ii], csd, h,
                                     xlin, ylin, csd_x, csd_y)
         pots /= 2*np.pi*sigma
         pots = pots.reshape(num_ele, 1)
@@ -153,3 +152,21 @@ def calculate_potential(csd_at, csd, measure_locations, h, sigma=1.):
         pots /= 4*np.pi*sigma
         pots = pots.reshape(num_ele, 1)
     return pots
+
+
+def build_kernel_matrix(measure_locations, xx, states, dim=2, yy=None, xlin=None, ylin=None):
+    K = np.zeros((len(measure_locations), len(states)))
+    if dim == 1:
+        for i, s in enumerate(states):
+            csd_prof = add_1d_gaussians(xx, s[None])
+            for j, m in enumerate(measure_locations):
+                K[j, i] = integrate_1D(m, csd_x=xx, csd=csd_prof, h=1)
+        return K
+    elif dim == 2:
+        for i, s in enumerate(states):
+            csd_prof = add_2d_gaussians(xx, yy, [s])
+            for j, m in enumerate(measure_locations):
+                K[j, i] = integrate_2D(x=m[0], y=m[1], csd=csd_prof, h=1, xlin=xlin, ylin=ylin, X=xx, Y=yy)
+        return K
+    else:
+        raise ValueError

@@ -87,6 +87,20 @@ def gauss_2d_large(csd_at, seed=0):
     return f
 
 
+def add_2d_gaussians(xx, yy, states):
+    csd_at = np.dstack([xx, yy]).reshape(-1, 2)
+    f = np.zeros_like(xx)
+    for s in states:
+        loc, cov = s
+        det = np.linalg.det(cov.cov)
+        if det <= 0:
+            continue
+        x = csd_at - loc
+        source = 1/(2*3.14*np.sqrt(det)) * cov.amplitude * np.exp(-np.multiply(x @ cov.cov, x).sum(axis=1))
+        f += source.reshape(xx.shape)
+    return f
+
+
 def gauss_2d_small(csd_at, seed=0):
     '''random quadpolar small source in 2D'''
     x, y = csd_at
