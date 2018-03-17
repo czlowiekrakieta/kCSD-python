@@ -1,5 +1,6 @@
 import numpy as np
 from random import sample
+from kcsd.utility_functions import CovData
 import warnings
 
 
@@ -35,8 +36,8 @@ def array_check(x, randomness, shape=None, seed=0):
 
 # 1D
 def generate_blob_1D(start, stop, nr, randomness, seed=0):
-    """
 
+    """
     :param start:
     :param stop:
     :param nr:
@@ -44,6 +45,7 @@ def generate_blob_1D(start, stop, nr, randomness, seed=0):
     :param seed:
     :return:
     """
+
     L = np.linspace(start=start, stop=stop, num=nr)
     L += randomness
     return L
@@ -84,8 +86,8 @@ def generate_states(centers, std, scaling, randomness, seed):
 
 
 def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, seed=0, randomness=0):
-    """
 
+    """
     :param list[int] pm_table: list of 1 and -1, determining sign of source in this place
     :param std:
     :param scaling:
@@ -96,9 +98,6 @@ def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, 
                                     they will be randomly sampled
     :return:
     """
-
-    # TODO: zmodyfikowac to tak, zeby generowalo od razu kilka/kilkanascie wartosci losowych, ktore
-    # dopiero potem beda uzywane do symulowania losowosci
 
     N = len(pm_table)
     if isinstance(real, float):
@@ -138,81 +137,14 @@ def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, 
 def get_dipoles_with_fakes_outside():
     pass
 
+
 def get_random_blobs_1D(nr, fake_to_real_ratio):
     pass
 
 # 2D
-def posdefcheck(a, raise_ex=False):
-    eigs = np.linalg.eigvals(a)
-    if np.any(eigs<0):
-        if raise_ex:
-            raise np.linalg.LinAlgError("Matrix not positive definite: {}. Eigenvalues: {}".format(
-                        a, eigs)
-                    )
-        return False
-    return True
 
-class CovData:
-    def __init__(self, arr, resample=True):
-        if len(arr.shape) == 1:
-            retry = True
-            self.trials = 0
-            while retry:
-                self.init(arr)
-                retry = not posdefcheck(self.cov)
-                arr = np.random.uniform(size=5)
-
-        elif arr.shape == (2, 2):
-            posdefcheck(arr, raise_ex=True)
-            self.cov = arr
-            self.amplitude = 2*np.random.uniform() - 1
-        else:
-            raise np.linalg.LinAlgError
-
-    def init(self, arr):
-        if isinstance(arr, np.ndarray) and len(arr) == 5:
-            self.angle = 2*np.pi*arr[0]
-            self.rmin = arr[1]/10 + 0.1
-            self.rmax = 2*self.rmin
-            self.amplitude = 2*arr[2]-1
-            self.sigma_x = self.rmin + arr[3]*self.rmin
-            self.sigma_y = self.rmin + arr[4]*self.rmin
-
-            sine = np.sin(self.angle)
-            cos = np.cos(self.angle)
-            dsine = np.sin(2*self.angle)
-
-            var = sine**2/(2*self.sigma_x**2) + cos**2/(2*self.sigma_y**2)
-            cov = -dsine/(4*self.sigma_x**2) + dsine/(2*self.sigma_y**2)
-
-            self.cov = np.array([[var, cov], [cov, var]])
-            # if not np.all(np.linalg.eigvals(self.cov) > 0):
-            #     raise np.linalg.LinAlgError("matrix not positive definite: {}".format(self.cov))
-
-        else:
-            if hasattr(arr, '__iter__'):
-                raise TypeError("arr need to be numpy ndarray of length 5. It is: {}, size: {}".format(arr.__class__, len(arr)))
-            else:
-                raise TypeError("arr need to be numpy ndarray of length 5. It is: {}".format(type(arr)))
-
-    def __repr__(self):
-        return "CovData object. Angle: {:.2f}, Var: {:.2f}, Cov: {:.2f}".format(self.angle, self.cov[0, 0], self.cov[0, 1])
-
-
-def get_chessboard():
-    pass
-
-
-def get_tree_with_fakes_outside():
-    pass
-
-
-def get_sinusoid():
-    pass
-
-
-def generate_sources_along_the_curve(coordinates, nr_between_points, seed=0, n_divisions=10, fake_squares=3,
-                                     ret_clear=False, with_fakes=False):
+def generate_sources_along_the_curve(coordinates, nr_between_points, seed=0, n_divisions=10, fake_squares=3, ampl=None,
+                                     ret_clear=False, with_fakes=False, clear_squares=None, spread_cov=None):
     """
 
     :param np.ndarray coordinates:
@@ -223,12 +155,16 @@ def generate_sources_along_the_curve(coordinates, nr_between_points, seed=0, n_d
     :return:
     """
     N = len(coordinates)
+    if ampl is not None:
+        if isinstance(ampl, float):
+            ampl = [ampl]*N
     np.random.seed(seed)
     xmin, xmax = min(coordinates[:, 0]), max(coordinates[:, 0])
     ymin, ymax = min(coordinates[:, 1]), max(coordinates[:, 1])
     xdivs = np.linspace(xmin, xmax, num=n_divisions)
     ydivs = np.linspace(ymin, ymax, num=n_divisions)
-    clear_squares = np.ones((n_divisions, n_divisions)).astype(bool)
+    if clear_squares is None:
+        clear_squares = np.ones((n_divisions, n_divisions)).astype(bool)
 
     states = []
     for i in range(N-1):
@@ -247,6 +183,10 @@ def generate_sources_along_the_curve(coordinates, nr_between_points, seed=0, n_d
 
         for j in range(nr_between_points):
             cov = CovData(np.random.uniform(size=5))
+            if spread_cov is not None:
+                cov.cov = spread_cov
+            if ampl is not None:
+                cov.amplitude = ampl[j]
             states.append((np.array((x[j], y[j])), cov))
 
     # fake_randoms = random_bank[N*nr_between_points*7:]
@@ -272,11 +212,12 @@ def generate_sources_along_the_curve(coordinates, nr_between_points, seed=0, n_d
                                                  ydivs=ydivs,
                                                  nr_per_blob=nr_between_points,
                                                  random_bank=np.random.uniform(size=fake_squares*nr_between_points*5 + fake_squares*5))
+
+        if ret_clear:
+            return states, fakes, clear_squares
         return states, fakes
-    # else:
-    #     return states, fakes, (clear_squares, fake_centers, clear, xdivs, ydivs)
-    else:
-        return states
+
+    return states
 
 
 def generate_blobs_within_boundaries(centers, square_idx, xdivs, ydivs, nr_per_blob, random_bank=None, seed=0):

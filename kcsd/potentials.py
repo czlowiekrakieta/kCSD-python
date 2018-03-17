@@ -2,6 +2,7 @@
 import numpy as np
 from kcsd.csd_profile import csd_available_dict, add_2d_gaussians, add_1d_gaussians
 from scipy.integrate import simps
+import time
 
 
 def generate_csd(csd_profile, csd_at=None, dim=1, seed=0):
@@ -77,6 +78,9 @@ def integrate_2D(x, y, csd, h, xlin, ylin, X, Y):
     for i in range(Ny):
         I[i] = simps(y[:, i], ylin)          # I changed the integral
     F = simps(I, xlin)                       # then an integral over the result
+
+    # Łukasz Mądry: UWAGA, ZAMIENIŁEM POWYŻEJ xlin i ylin MIEJSCAMI
+    # TODO: OPRACOWAC LEPSZY SPOSOB NA RADZENIE SOBIE Z NIEZGADZAJACYMI SIE WYMIARAMI
     return F
 
 
@@ -115,8 +119,8 @@ def calculate_potential(csd_at, csd, measure_locations, h, sigma=1.):
     elif dim == 2:
         csd_x = csd_at[0, :, :]
         csd_y = csd_at[1, :, :]
-        xlin = csd_x[:, 0]
-        ylin = csd_y[0, :]
+        xlin = csd_x[0, :]
+        ylin = csd_y[:, 0]
         xlims = [xlin[0], xlin[-1]]
         ylims = [ylin[0], ylin[-1]]
         num_ele = measure_locations.shape[0]
@@ -154,19 +158,39 @@ def calculate_potential(csd_at, csd, measure_locations, h, sigma=1.):
     return pots
 
 
-def build_kernel_matrix(measure_locations, xx, states, dim=2, yy=None, xlin=None, ylin=None):
+def build_kernel_matrix(measure_locations, xx, states, dim=2, yy=None, xlin=None, ylin=None, verbose=False):
     K = np.zeros((len(measure_locations), len(states)))
+    N = len(states)*len(measure_locations)
+    thresh = .1
+    # times = []
+    t0 = time.time()
     if dim == 1:
         for i, s in enumerate(states):
             csd_prof = add_1d_gaussians(xx, s[None])
             for j, m in enumerate(measure_locations):
                 K[j, i] = integrate_1D(m, csd_x=xx, csd=csd_prof, h=1)
+
+                cnt = (i*len(measure_locations) + j)
+                tc = time.time() - t0
+                dt = tc/cnt
+                if cnt / N > thresh:
+                    print("Progress: {}. Time elapsed: {}. Time estimated: {}".format(int(100*thresh),
+                                                                                      tc, (N - cnt)*dt ))
+                    thresh += .1
         return K
     elif dim == 2:
         for i, s in enumerate(states):
             csd_prof = add_2d_gaussians(xx, yy, [s])
             for j, m in enumerate(measure_locations):
                 K[j, i] = integrate_2D(x=m[0], y=m[1], csd=csd_prof, h=1, xlin=xlin, ylin=ylin, X=xx, Y=yy)
+
+                cnt = (i*len(measure_locations) + j+1)
+                tc = time.time() - t0
+                dt = tc/cnt
+                if cnt / N > thresh:
+                    print("Progress: {}. Time elapsed: {}. Time estimated: {}".format(int(100*thresh),
+                                                                                      tc, (N - cnt)*dt ))
+                    thresh += .1
         return K
     else:
         raise ValueError

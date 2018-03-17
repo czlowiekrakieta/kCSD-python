@@ -14,7 +14,7 @@ import numpy as np
 # import matplotlib.cm as cm
 # from matplotlib import gridspec
 from numpy import exp
-
+from kcsd.utility_functions import CovData, posdefcheck
 
 def get_states_1D(seed, n=1):
     """
@@ -92,10 +92,10 @@ def add_2d_gaussians(xx, yy, states):
     f = np.zeros_like(xx)
     for s in states:
         loc, cov = s
-        det = np.linalg.det(cov.cov)
-        if det <= 0:
+        if not posdefcheck(cov.cov, raise_ex=False):
             continue
         x = csd_at - loc
+        det = np.linalg.det(cov.cov)
         source = 1/(2*3.14*np.sqrt(det)) * cov.amplitude * np.exp(-np.multiply(x @ cov.cov, x).sum(axis=1))
         f += source.reshape(xx.shape)
     return f

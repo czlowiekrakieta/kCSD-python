@@ -14,10 +14,31 @@ from __future__ import division
 
 import numpy as np
 from scipy import interpolate
+from collections import namedtuple
+
 
 class NotFittedError(Exception):
     pass
 
+def check_random_state(seed):
+    """Turn seed into a np.random.RandomState instance
+
+    Parameters
+    ----------
+    seed : None | int | instance of RandomState
+        If seed is None, return the RandomState singleton used by np.random.
+        If seed is an int, return a new RandomState instance seeded with seed.
+        If seed is already a RandomState instance, return it.
+        Otherwise raise ValueError.
+    """
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState'
+                     ' instance' % seed)
 
 def check_for_duplicated_electrodes(elec_pos):
     """Checks for duplicate electrodes
@@ -215,3 +236,80 @@ def get_src_params_3D(Lx, Ly, Lz, n_src):
     Lz_n = (nz-1) * ds
     return (nx, ny, nz,  Lx_n, Ly_n, Lz_n, ds)
 
+
+def posdefcheck(a, raise_ex=False):
+    eigs = np.linalg.eigvals(a)
+    if np.any(eigs<0):
+        if raise_ex:
+            raise np.linalg.LinAlgError("Matrix not positive definite: {}. Eigenvalues: {}".format(
+                        a, eigs)
+                    )
+        return False
+    return True
+
+
+class CovData:
+    def __init__(self, arr, resample=True):
+        self.cov = np.eye(2)
+        if len(arr.shape) == 1:
+            retry = True
+            self.trials = 0
+            while retry:
+                self.init(arr)
+                retry = not posdefcheck(self.cov)
+                arr = np.random.uniform(size=5)
+                self.trials += 1
+
+        elif arr.shape == (2, 2):
+            self.cov = arr
+            self.amplitude = 2*np.random.uniform() - 1
+        else:
+            raise np.linalg.LinAlgError
+
+    def init(self, arr):
+        if isinstance(arr, np.ndarray) and len(arr) == 5:
+            self.angle = 2*np.pi*arr[0]
+            self.rmin = arr[1]/10 + 0.1
+            self.rmax = 2*self.rmin
+            self.amplitude = 2*arr[2]-1
+            self.sigma_x = self.rmin + arr[3]*self.rmin
+            self.sigma_y = self.rmin + arr[4]*self.rmin
+
+            sine_sq = np.sin(self.angle)**2
+            cos_sq = np.cos(self.angle)**2
+            dsine = np.sin(2*self.angle)
+
+            vary = sine_sq/(2*self.sigma_x**2) + cos_sq/(2*self.sigma_y**2)
+            varx = sine_sq/(2*self.sigma_y**2) + cos_sq/(2*self.sigma_x**2)
+            cov = -dsine/(4*self.sigma_x**2) + dsine/(4*self.sigma_y**2)
+
+            self.cov = np.array([[varx, cov], [cov, vary]])
+            # if not np.all(np.linalg.eigvals(self.cov) > 0):
+            #     raise np.linalg.LinAlgError("matrix not positive definite: {}".format(self.cov))
+
+        else:
+            if hasattr(arr, '__iter__'):
+                raise TypeError("arr need to be numpy ndarray of length 5. It is: {}, size: {}".format(arr.__class__, len(arr)))
+            else:
+                raise TypeError("arr need to be numpy ndarray of length 5. It is: {}".format(type(arr)))
+
+    def __repr__(self):
+        msg = "CovData object. Amplitude: {:.2f}, Angle: {:.2f}, VarX: {:.2f}, VarY: {:.2f}"
+        return msg.format(self.amplitude, self.angle, self.cov[0, 0], self.cov[1, 1])
+
+    @property
+    def cov(self):
+        return self._cov
+
+    @cov.setter
+    def cov(self, val):
+        """
+
+        :param np.ndarray val:
+        :return:
+        """
+        posdefcheck(val, raise_ex=True)
+        self._cov = val
+
+
+csd_tuple = namedtuple('csd_tuple', ['real_states', 'fitting_states', 'kcsd', 'k_matrix', 'errors', 'potentials', 'real_csd', 'xx', 'yy'])

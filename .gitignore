@@ -67,3 +67,4 @@ target/
 **.pyc
 **.xml
 **.sh
+results_pickles/*
