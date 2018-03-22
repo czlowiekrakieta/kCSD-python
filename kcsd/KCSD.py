@@ -125,11 +125,18 @@ class KCSD(CSD):
         self.parallel = kwargs.pop('parallel', False)
         if self.parallel:
             try:
-                from joblib.parallel import Parallel, delayed
+                try:
+                    from joblib.parallel import Parallel, delayed
+                except ImportError:
+                    from sklearn.externals.joblib import Parallel, delayed
             except ImportError:
                 self.parallel = False
                 warnings.warn("joblib library is not available at the machine, "
                               "falling back to sequential computing.", ImportWarning)
+        self.l1_ratios = kwargs.pop('l1_ratios', None)
+        self.alpha_eps = kwargs.pop('alpha_eps', 1e-3)
+        self.n_alphas = kwargs.pop('n_alphas', 25)
+        self.n_lambdas = kwargs.pop('n_lambdas', 25)
         self.n_jobs = kwargs.pop('n_jobs', 4)
         self.seed = kwargs.pop('seed', None)
         self.selection = kwargs.pop('selection', 'cyclic')
@@ -146,8 +153,8 @@ class KCSD(CSD):
         self.xmin = kwargs.pop('xmin', np.min(self.ele_pos[:, 0]))
         self.xmax = kwargs.pop('xmax', np.max(self.ele_pos[:, 0]))
         self.gdx = kwargs.pop('gdx', 0.01 * (self.xmax - self.xmin))
-        self.max_iters = kwargs.pop('max_iters', 100)
-        self.tol = kwargs.pop('tol', 1e-2)
+        self.max_iters = kwargs.pop('max_iters', 1000)
+        self.tol = kwargs.pop('tol', 1e-4)
         self.alpha = kwargs.pop('alpha', 0.0)
         self.solver = kwargs.pop('solver', 'ridge')
         if self.dim >= 2:
@@ -374,7 +381,7 @@ class KCSD(CSD):
         """
         if lambdas is None:  # when None
             print('No lambda given, using defaults')
-            lambdas = np.logspace(-2, -25, 25, base=10.)  # Default multiple lambda
+            lambdas = np.logspace(-2, -25, self.n_lambdas, base=10.)  # Default multiple lambda
             lambdas = np.hstack((lambdas, np.array([0.0])))
         elif lambdas.size == 1:  # resize when one entry
             lambdas = lambdas.flatten()
@@ -382,7 +389,7 @@ class KCSD(CSD):
         if self.solver == 'elasticnet':
             if alphas is None:
                 print('No alpha given, using defaults')
-                alphas = np.logspace(-2, -25, 25, base=10.)
+                alphas = np.logspace(-2, -25, self.n_alphas, base=10.)
                 alphas = np.hstack((alphas, np.array([0.0])))
             elif alphas.size == 1:
                 alphas = alphas.flatten()

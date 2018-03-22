@@ -15,13 +15,13 @@ measure_locations = np.dstack(measure_locations).reshape(-1, 2)
 pots = calculate_potential(np.stack((xx, yy)), true_csd, measure_locations, h=R, sigma=R)
 
 f = 0
-try:
-    reg = REGCSD2D(measure_locations, pots, parallel=True)
-    reg.cross_validate()
-    reg.values()
-except:
-    f += 1
-    print("Parallel REGCSD failed")
+# try:
+reg = REGCSD2D(measure_locations, pots, parallel=True)
+reg.cross_validate()
+reg.values()
+# except:
+#     f += 1
+#     print("Parallel REGCSD failed")
 
 try:
     reg = REGCSD2D(measure_locations, pots, parallel=False)

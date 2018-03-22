@@ -52,6 +52,7 @@ def compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters=100, tol=1e-3, sele
         return cd_fast.enet_coordinate_descent(coef, lasso_reg, ridge_reg, X, y, max_iters, tol,
                                                rng, selection == 'random', False)[0]
 
+
 def slow_compute_elasticnet(X, y, lasso_reg, ridge_reg, max_iters, tol=1e-3, ret_loss=False, selection='random'):
     """
     Computes ElasticNet estimates for kCSD method

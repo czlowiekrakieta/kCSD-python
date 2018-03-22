@@ -76,8 +76,8 @@ def integrate_2D(x, y, csd, h, xlin, ylin, X, Y):
     y = np.arcsinh(2*h / m) * csd            # corrected
     I = np.zeros(Ny)                         # do a 1-D integral over every row
     for i in range(Ny):
-        I[i] = simps(y[:, i], ylin)          # I changed the integral
-    F = simps(I, xlin)                       # then an integral over the result
+        I[i] = simps(y[:, i], xlin)          # I changed the integral
+    F = simps(I, ylin)                       # then an integral over the result
 
     # Łukasz Mądry: UWAGA, ZAMIENIŁEM POWYŻEJ xlin i ylin MIEJSCAMI
     # TODO: OPRACOWAC LEPSZY SPOSOB NA RADZENIE SOBIE Z NIEZGADZAJACYMI SIE WYMIARAMI
@@ -119,8 +119,8 @@ def calculate_potential(csd_at, csd, measure_locations, h, sigma=1.):
     elif dim == 2:
         csd_x = csd_at[0, :, :]
         csd_y = csd_at[1, :, :]
-        xlin = csd_x[0, :]
-        ylin = csd_y[:, 0]
+        xlin = csd_x[:, 0]
+        ylin = csd_y[0, :]
         xlims = [xlin[0], xlin[-1]]
         ylims = [ylin[0], ylin[-1]]
         num_ele = measure_locations.shape[0]

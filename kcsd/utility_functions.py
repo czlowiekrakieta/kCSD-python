@@ -249,7 +249,19 @@ def posdefcheck(a, raise_ex=False):
 
 
 class CovData:
+    """
+    ŁM
+
+    Wrapper used for building covariance matrix from set of random numbers.
+
+    """
     def __init__(self, arr, resample=True):
+        """
+        arr = [angle, rmin, amplitude, sigma_x, sigma_y]
+
+        :param arr:
+        :param resample:
+        """
         self.cov = np.eye(2)
         if len(arr.shape) == 1:
             retry = True
