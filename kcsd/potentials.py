@@ -78,9 +78,6 @@ def integrate_2D(x, y, csd, h, xlin, ylin, X, Y):
     for i in range(Ny):
         I[i] = simps(y[:, i], xlin)          # I changed the integral
     F = simps(I, ylin)                       # then an integral over the result
-
-    # Łukasz Mądry: UWAGA, ZAMIENIŁEM POWYŻEJ xlin i ylin MIEJSCAMI
-    # TODO: OPRACOWAC LEPSZY SPOSOB NA RADZENIE SOBIE Z NIEZGADZAJACYMI SIE WYMIARAMI
     return F
 
 
