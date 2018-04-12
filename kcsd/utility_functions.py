@@ -115,7 +115,7 @@ def distribute_srcs_2D(X, Y, n_src, ext_x, ext_y, R_init):
     ext_y_n = (Ly_nn - Ly)/2
     X_src, Y_src = np.mgrid[(np.min(X) - ext_x_n):(np.max(X) + ext_x_n):np.complex(0,nx),
                             (np.min(Y) - ext_y_n):(np.max(Y) + ext_y_n):np.complex(0,ny)]
-    d = round(R_init/ds)
+    # d = round(R_init/ds)
     #R = d * ds
     R = R_init
     return X_src, Y_src, R
@@ -197,7 +197,7 @@ def distribute_srcs_3D(X, Y, Z, n_src, ext_x, ext_y, ext_z, R_init):
     X_src, Y_src, Z_src = np.mgrid[(np.min(X) - ext_x_n):(np.max(X) + ext_x_n):np.complex(0,nx),
                                    (np.min(Y) - ext_y_n):(np.max(Y) + ext_y_n):np.complex(0,ny),
                                    (np.min(Z) - ext_z_n):(np.max(Z) + ext_z_n):np.complex(0,nz)]
-    d = np.round(R_init/ds)
+    # d = np.round(R_init/ds)
     R = R_init
     return (X_src, Y_src, Z_src, R)
 
@@ -234,7 +234,7 @@ def get_src_params_3D(Lx, Ly, Lz, n_src):
     Lx_n = (nx-1) * ds
     Ly_n = (ny-1) * ds
     Lz_n = (nz-1) * ds
-    return (nx, ny, nz,  Lx_n, Ly_n, Lz_n, ds)
+    return (nx, ny, nz, Lx_n, Ly_n, Lz_n, ds)
 
 
 def posdefcheck(a, raise_ex=False):
@@ -325,3 +325,12 @@ class CovData:
 
 
 csd_tuple = namedtuple('csd_tuple', ['real_states', 'fitting_states', 'kcsd', 'k_matrix', 'errors', 'potentials', 'real_csd', 'xx', 'yy'])
+
+
+def plot_csd_2D(xx, yy, true_csd, levels=20):
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    t_max = np.max(np.abs(true_csd))
+    t_max += t_max/1000
+    levels = np.linspace(-t_max, t_max, num=20)
+    plt.contourf(xx, yy, true_csd, levels=levels, cmap=cm.bwr_r)

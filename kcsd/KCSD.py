@@ -11,6 +11,7 @@ KCSD1D[1][2], KCSD2D[1], KCSD3D[1], MoIKCSD[1]
 """
 from __future__ import division
 from abc import abstractmethod
+from collections import Iterable
 
 import numpy as np
 from scipy import special, integrate, interpolate
@@ -115,6 +116,25 @@ class KCSD(CSD):
         self.method()
         self.fitted = False
 
+    def __repr__(self):
+        msg = "{name}\nN. SRC:\t{n_src}" \
+                  "\nSOLVER:\t{solver}\nBASIS:\t{basis}\n"
+
+        if self.fitted:
+            msg += "ALPHA:\t{alpha}\nLAMBDA:\t{lambd}\nR:\t{r}"
+            return msg.format(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
+                              alpha=self.alpha, lambd=self.lambd, basis=self.src_type, r=self.R)
+
+        return msg.format(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
+                          basis=self.src_type)
+
+    def get_params(self):
+        if self.fitted:
+            return dict(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
+                        alpha=self.alpha, lambd=self.lambd, basis=self.src_type, r=self.R)
+        return dict(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
+                    basis=self.src_type)
+
     def parameters(self, **kwargs):
         """Defining the default values of the method passed as kwargs
         Parameters
@@ -148,7 +168,6 @@ class KCSD(CSD):
         self.csd_at = kwargs.pop('csd_at', None)
         self.n_src_init = kwargs.pop('n_src_init', 1000)
         self.lambd = kwargs.pop('lambd', 0.0)
-        self.R_init = kwargs.pop('R_init', 0.23)
         self.ext_x = kwargs.pop('ext_x', 0.0)
         self.xmin = kwargs.pop('xmin', np.min(self.ele_pos[:, 0]))
         self.xmax = kwargs.pop('xmax', np.max(self.ele_pos[:, 0]))
@@ -167,8 +186,25 @@ class KCSD(CSD):
             self.zmin = kwargs.pop('zmin', np.min(self.ele_pos[:, 2]))
             self.zmax = kwargs.pop('zmax', np.max(self.ele_pos[:, 2]))
             self.gdz = kwargs.pop('gdz', 0.01 * (self.zmax - self.zmin))
+
+        self.validate_R(kwargs.pop('Rs', 0.23))
         if kwargs:
             raise TypeError('Invalid keyword arguments:', kwargs.keys())
+
+    def validate_R(self, Rs):
+        if isinstance(Rs, float):
+            self.all_R = [[Rs]]
+
+        elif isinstance(Rs, (list, np.ndarray)):
+            self.all_R = [x if isinstance(x, Iterable) else [x] for x in Rs]
+
+        else:
+            raise TypeError
+
+        self.R = self.all_R[0]
+        self.R_init = self.all_R[0]
+        self.R_max = max(self.R)
+        self.n_rs = len(self.R)
 
     def method(self):
         """Actual sequence of methods called for KCSD
@@ -198,15 +234,18 @@ class KCSD(CSD):
         """
         xs = np.logspace(0., np.log10(self.dist_max + 1.), dist_table_density)
         xs = xs - 1.0  # starting from 0
-        dist_table = np.zeros(len(xs))
-        for i, pos in enumerate(xs):
-            dist_table[i] = self.forward_model(pos,
-                                               self.R,
-                                               self.h,
-                                               self.sigma,
-                                               self.basis)
-        self.interpolate_pot_at = interpolate.interp1d(xs, dist_table,
-                                                       kind='cubic')
+        dist_table = np.zeros((len(self.R), len(xs)))
+
+        self.interpolate_pot_at = []
+        for j, r in enumerate(self.R):
+            for i, pos in enumerate(xs):
+                dist_table[j, i] = self.forward_model(pos,
+                                                      r,
+                                                      self.h,
+                                                      self.sigma,
+                                                      self.basis)
+            self.interpolate_pot_at.append(interpolate.interp1d(xs, dist_table[j, :],
+                                                                kind='cubic'))
 
     def update_b_pot(self):
         """Updates the b_pot  - array is (#_basis_sources, #_electrodes)
@@ -220,7 +259,7 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.b_pot = self.interpolate_pot_at(self.src_ele_dists)
+        self.b_pot = np.vstack((self.interpolate_pot_at[i](self.src_ele_dists) for i in range(self.n_rs)))
         self.k_pot = np.dot(self.b_pot.T, self.b_pot)  # K(x,x') Eq9,Jan2012
         self.k_pot /= self.n_src
         # self.k_pot = np.matrix(self.k_pot)
@@ -236,7 +275,7 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.b_src = self.basis(self.src_estm_dists, self.R).T
+        self.b_src = np.hstack((self.basis(self.src_estm_dists, r).T for r in self.R))
         self.k_interp_cross = np.dot(self.b_src, self.b_pot)  # K_t(x,y) Eq17
         self.k_interp_cross /= self.n_src
 
@@ -250,7 +289,8 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.b_interp_pot = self.interpolate_pot_at(self.src_estm_dists).T
+        # print('SHAPES IN B_INTERP: ', [x.shape for x in z])
+        self.b_interp_pot = np.vstack((self.interpolate_pot_at[i](self.src_estm_dists) for i in range(self.n_rs))).T
         self.k_interp_pot = np.dot(self.b_interp_pot, self.b_pot)
         self.k_interp_pot /= self.n_src
 
@@ -319,8 +359,10 @@ class KCSD(CSD):
         R : float
         """
         self.R = R
+        self.R_max = max(self.R)
+        self.n_rs = len(self.R)
         self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R
+                            np.max(self.src_estm_dists)) + self.R_max
         self.method()
 
     def update_lambda(self, lambd):
@@ -397,7 +439,7 @@ class KCSD(CSD):
             alphas = np.array([0.0])
 
         if Rs is None:  # when None
-            Rs = np.array((self.R)).flatten()  # Default over one R value
+            Rs = np.array(self.all_R)  # Default over one R value
         # errs = np.zeros((Rs.size, lambdas.size, alphas.size))
         # index_generator = []
         # for ii in range(self.n_ele):
@@ -407,20 +449,26 @@ class KCSD(CSD):
         #     index_generator.append((idx_train, idx_test))
 
         if self.parallel:
-            errs = parallel_search(X=self.k_pot.copy(),
-                                   y=self.pots.copy(),
-                                   K=self.k_fold_split,
-                                   alphas=alphas,
-                                   lambdas=lambdas,
-                                   solver=self.solver,
-                                   method=self.NAME,
-                                   n_jobs=self.n_jobs)
+            errs = []
+            for r in Rs:
+                print("Cross validating R: ", r)
+                self.update_R(r)
+                one_search_errs = parallel_search(X=self.k_pot.copy(),
+                                                  y=self.pots.copy(),
+                                                  K=self.k_fold_split,
+                                                  alphas=alphas,
+                                                  lambdas=lambdas,
+                                                  solver=self.solver,
+                                                  method=self.NAME,
+                                                  n_jobs=self.n_jobs)
+                errs.append(one_search_errs)
+            errs = np.concatenate(errs, axis=0)
         else:
             errs = self.compute_cverror_sequentially(Rs, lambdas, alphas)
 
         err_idx = np.where(errs == np.min(errs))  # Index of the least error
         print(err_idx)
-        cv_R = Rs[err_idx[0]][0]  # First occurance of the least error's
+        cv_R = Rs[err_idx[0]][0]  # First occurence of the least error's
         cv_lambda = lambdas[err_idx[1]][0]
         cv_alpha = alphas[err_idx[2]][0]
         self.cv_error = np.min(errs)  # otherwise is None
@@ -429,15 +477,17 @@ class KCSD(CSD):
         self.update_alpha(cv_alpha)
         self.fitted = True
         self.cv_errors_history = errs
-        if self.solver == 'ridge':
-            print('R, lambda :', cv_R, cv_lambda)
-            return cv_R, cv_lambda
-        elif self.solver == 'elasticnet':
-            print('R, lambda, alpha :', cv_R, cv_lambda, cv_alpha)
-            return cv_R, cv_lambda, cv_alpha
-        else:
-            print('R, alpha : ', cv_R, cv_alpha)
-            return cv_R, cv_alpha
+
+        return self
+        # if self.solver == 'ridge':
+        #     print('R, lambda :', cv_R, cv_lambda)
+        #     return cv_R, cv_lambda
+        # elif self.solver == 'elasticnet':
+        #     print('R, lambda, alpha :', cv_R, cv_lambda, cv_alpha)
+        #     return cv_R, cv_lambda, cv_alpha
+        # else:
+        #     print('R, alpha : ', cv_R, cv_alpha)
+        #     return cv_R, cv_alpha
 
     def compute_cverror(self, lambd, alpha):
         """Useful for Cross validation error calculations
@@ -481,8 +531,8 @@ class KCSD(CSD):
         # thresh = .1
         errs = np.zeros((Rs.size, lambdas.size, alphas.size))
         for R_idx, R in enumerate(Rs):  # Iterate over R
-            self.update_R(R)
             print('Cross validating R (all lambda) :', R)
+            self.update_R(R)
             for lambd_idx, lambd in enumerate(lambdas):  # Iterate over lambdas
                 for alpha_idx, alpha in enumerate(alphas): # Iterate over alphas
                     errs[R_idx, lambd_idx, alpha_idx] = self.compute_cverror(lambd,
@@ -605,7 +655,7 @@ class KCSD1D(KCSD):
         self.src_ele_dists = distance.cdist(src_loc, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc, est_loc, 'euclidean')
         self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R
+                            np.max(self.src_estm_dists)) + self.R_max
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions
@@ -785,7 +835,7 @@ class KCSD2D(KCSD):
         est_loc = np.array((self.estm_x.ravel(), self.estm_y.ravel()))
         self.src_ele_dists = distance.cdist(src_loc.T, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc.T, est_loc.T, 'euclidean')
-        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R
+        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R_max
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions
@@ -1104,7 +1154,7 @@ class KCSD3D(KCSD):
         self.src_ele_dists = distance.cdist(src_loc.T, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc.T, est_loc.T, 'euclidean')
         self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R
+                            np.max(self.src_estm_dists)) + self.R_max
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions

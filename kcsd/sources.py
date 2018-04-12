@@ -85,6 +85,23 @@ def generate_states(centers, std, scaling, randomness, seed):
 #
 
 
+def generate_dipole_csd(pm_table, random_factor, start, end, boundary=.5, width=None, eps=1e-8, scaling=None):
+    N = len(pm_table)
+    centers = np.linspace(start+boundary, end-boundary, num=N)
+    if width is None:
+        width = (np.ones(N)*(end - start))/(2*N)
+    elif isinstance(width, (int, float)):
+        width = np.ones(N)*width
+
+    add_uniform_noise(centers, r=random_factor, bounds=(start, end))
+    add_uniform_noise(width, r=random_factor, bounds=(eps, (end-start)/N))
+    if scaling is not None:
+        pm_table = np.array(pm_table)*scaling
+
+    states = np.vstack((pm_table, centers, width)).T
+    return states
+
+
 def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, seed=0, randomness=0):
 
     """
@@ -107,6 +124,9 @@ def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, 
         if not (isinstance(real, list) and all([isinstance(x, int) for x in real])):
             raise TypeError
 
+    if isinstance(scaling, (int, float)):
+        scaling = [scaling]*N
+
     centers = np.linspace(left, right, num=N)
     width = np.ones(N)*(right - left)/(2*N)
     random_bank = (2*rstat(seed).uniform(size=2*N+N*nr_per_blob*2)-1)*randomness
@@ -122,9 +142,9 @@ def get_dipoles(pm_table, std, scaling, left, right, nr_per_blob=10, real=None, 
                                 randomness=subbank[i*2*nr_per_blob:i*2*nr_per_blob+nr_per_blob],
                                 seed=seed)
         if pm_table[i] == 1:
-            states = generate_states(blob, std, np.abs(scaling), subbank[i*2*nr_per_blob + nr_per_blob:(i+1)*2*nr_per_blob], seed)
+            states = generate_states(blob, std, np.abs(scaling[i]), subbank[i*2*nr_per_blob + nr_per_blob:(i+1)*2*nr_per_blob], seed)
         else:
-            states = generate_states(blob, std, -np.abs(scaling), subbank[i*2*nr_per_blob + nr_per_blob:(i+1)*2*nr_per_blob], seed)
+            states = generate_states(blob, std, -np.abs(scaling[i]), subbank[i*2*nr_per_blob + nr_per_blob:(i+1)*2*nr_per_blob], seed)
 
         if real[i]:
             true_currents.append(states)

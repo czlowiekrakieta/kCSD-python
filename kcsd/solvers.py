@@ -200,6 +200,8 @@ def kfold(N, k=None, seed=None):
 
 def cv_score(X, y, lasso_reg, ridge_reg, solver_fn, K=None, seed=None, max_iters=100):
     """
+    TODO: decyzja, czy zakladamy, ze parametry regularyzacji sa juz przemnozone przez N, czy je mnozymy?
+    chyba lepiej podawac przed przemnozeniem, bo tutaj jest zmienne N
 
     :param np.ndarray X:
     :param np.ndarray y:
@@ -223,9 +225,10 @@ def cv_score(X, y, lasso_reg, ridge_reg, solver_fn, K=None, seed=None, max_iters
         T = 1
     for t in range(T):
         for train, test in kfold(N, K, seed=seed):
+            n_f = train.size
             beta_ = solver_fn(X[train, :], y[train, t],
-                              lasso_reg=lasso_reg,
-                              ridge_reg=ridge_reg,
+                              lasso_reg=lasso_reg * n_f,
+                              ridge_reg=ridge_reg * n_f,
                               max_iters=max_iters)
             error += (np.matmul(X[test, :], beta_) - y[test]) ** 2
 
@@ -278,6 +281,37 @@ def parallel_search(X, y, K, alphas, lambdas, solver, n_jobs=4, method='kcsd'):
     errs = errs.reshape(1, -1, lambdas.size, alphas.size)
     errs = errs.sum(axis=1)
     return errs
+
+
+def lcurve_path(X, y, l1_ratio, alphas, debug=False):
+    N = X.shape[0]
+    A = alphas.shape[0]
+
+    l2_regs = N * (1 - l1_ratio) * alphas
+    l1_regs = N * l1_ratio * alphas
+
+    rng = np.random.RandomState(seed=0)
+    norms = np.zeros(A)
+    resids = np.zeros(A)
+    beta = np.zeros(X.shape[1])
+
+    X = np.asfortranarray(X)
+    y = np.asfortranarray(y)
+
+    for i, (l1, l2) in enumerate(zip(l1_regs, l2_regs)):
+        beta = cd_fast.enet_coordinate_descent(beta, l1, l2, X, y, 1000, 1e-4, rng, True, 0)[0]
+        norms[i] = np.linalg.norm(beta)
+        resids[i] = np.linalg.norm(np.matmul(X, beta) - y)
+
+    norms = np.log(norms + np.finfo(np.float64).eps)
+    resids = np.log(resids + np.finfo(np.float64).eps)
+
+    areas = resids[0] * (norms - norms[-1]) + resids * (norms[-1] - norms[0]) + resids[-1] * (norms[0] - norms)
+
+    if debug:
+        return areas, norms, resids
+
+    return alphas[areas.argmax()]
 
 
 def regularization_path(X, y, alphas=None, n_alphas=100, cv=False, method='lasso'):
