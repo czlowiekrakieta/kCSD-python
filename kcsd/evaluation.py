@@ -3,6 +3,23 @@ from kcsd.csd_profile import add_2d_gaussians
 
 
 def compute_relative_error(true_csd, reconstructed_csd):
+    """
+    Computes relative error between true CSD and reconstructed one.
+
+    Let T true CSD, R reconstructed
+
+    In continuous case:
+    RE = \frac{\int( T - R ) dS}{\int T dS}
+
+    In our, discrete:
+    RE = \frac{\norm{T-R}}{\norm{T}}
+    :param numpy.ndarray true_csd:
+    :param numpy.ndarray reconstructed_csd:
+    :return:
+    """
+    if reconstructed_csd.ndim > true_csd.ndim and reconstructed_csd.shape[-1] == 1:
+        reconstructed_csd = reconstructed_csd[:, ..., 0]
+
     numerator = norm(true_csd - reconstructed_csd)
     denominator = norm(true_csd)
     return numerator / denominator

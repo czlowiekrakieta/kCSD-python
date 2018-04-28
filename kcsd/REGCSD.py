@@ -193,15 +193,25 @@ class REGCSD(KCSD):
 
         cv_scores = []
         cv_params = []
+
+        all_norms = []
+        all_resids = []
         for r, R in enumerate(Rs):
             self.update_R(R)
             print("Cross validating R: ", R)
             X, y = self.k_pot.copy(), self.pots[:, 0]
-            jobs = (delayed(lcurve_path)(X, y, this_l1_ratio, this_alphas)
+            gram = self.b_src_estimation.T @ self.b_src_estimation
+            gram *= (self.xmax - self.xmin)*(self.ymax - self.ymin)/(self.n_estm)
+            jobs = (delayed(lcurve_path)(X, y, this_l1_ratio, this_alphas, gram)
                     for this_l1_ratio, this_alphas in zip(l1_ratios, alphas))
 
-            best_alphas = Parallel(n_jobs=4, backend='threading', verbose=self.verbose)(jobs)
+            paral_result = Parallel(n_jobs=4, backend='threading', verbose=self.verbose)(jobs)
+            areas, norms, resids = zip(*paral_result)
+            best_alphas = [this_alphas[ar.argmax()] for this_alphas, ar in zip(alphas, areas)]
             best_alphas = np.array(best_alphas)
+
+            all_norms.append(norms)
+            all_resids.append(resids)
 
             jobs = (delayed(cv_score)(X, y, l1 * alph, (1 - l1) * alph, compute_elasticnet, self.k_fold_split)
                     for l1, alph in zip(l1_ratios, best_alphas))
@@ -220,7 +230,17 @@ class REGCSD(KCSD):
         self.update_R(self.all_R[best_score_idx])
 
         self.fitted = True
+        self.all_norms = all_norms
+        self.all_resids = all_resids
         return self
+
+    def plot_lcurve(self, R_nr=0, l1_ratio_nr=0):
+        import matplotlib.pyplot as plt
+
+        plt.plot(np.exp(self.all_resids[R_nr][l1_ratio_nr]), np.exp(self.all_norms[R_nr][l1_ratio_nr]), 'ro')
+        plt.xlabel("RESIDS")
+        plt.ylabel("NORMS")
+        plt.show()
 
 class REGCSD1D(KCSD1D, REGCSD):
     def __init__(self, ele_pos, pots, **kwargs):

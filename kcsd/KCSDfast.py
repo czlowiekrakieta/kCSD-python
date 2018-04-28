@@ -4,40 +4,29 @@ kCSD method Jan et.al (2012).
 This was written by :
 [1]Chaitanya Chintaluri,
 [2]Michal Czerwinski,
+[3]Wladek Sredniawa (l-curve method)
 Laboratory of Neuroinformatics,
 Nencki Institute of Exprimental Biology, Warsaw.
 KCSD1D[1][2], KCSD2D[1], KCSD3D[1], MoIKCSD[1]
 
 """
 from __future__ import division
-from abc import abstractmethod
-from collections import Iterable
 
 import numpy as np
 from scipy import special, integrate, interpolate
 from scipy.spatial import distance
-from numpy.linalg import LinAlgError, norm
+from numpy.linalg import LinAlgError, svd
+import sys
+
 from kcsd import utility_functions as utils
 from kcsd import basis_functions as basis
-from kcsd.solvers import solvers, kfold, parallel_search
-import warnings
 
-from sklearn.linear_model import RidgeCV
-
-from joblib.parallel import Parallel, delayed
-
-from sklearn.linear_model import enet_path
-# from . import utility_functions as utils
-# from . import basis_functions as basis
 try:
-    from skmonaco import mcmiser
+    from joblib.parallel import Parallel, delayed
 
-    skmonaco_available = True
-    import multiprocessing
-
-    num_cores = multiprocessing.cpu_count()
-except ImportError:
-    skmonaco_available = False
+    paral = True
+except:
+    paral = False
 
 
 class CSD(object):
@@ -86,17 +75,9 @@ class CSD(object):
         -------
         RMSE : root mean squared difference
         """
-        RMSE = np.sqrt(np.mean(np.square(true_csd - pos_csd)))
+        csd = self.values(pos_csd)
+        RMSE = np.sqrt(np.mean(np.square(true_csd - csd)))
         return RMSE
-
-    @abstractmethod
-    def values(self):
-        raise NotImplementedError
-
-    def goodness_of_fit(self, true_csd):
-        estimated_csd = self.values()
-        return norm(estimated_csd - true_csd)/norm(true_csd)
-        # return np.sqrt(np.mean(np.square(true_csd - estimated_csd)))
 
 
 class KCSD(CSD):
@@ -107,7 +88,6 @@ class KCSD(CSD):
     The method implented here is based on the original paper
     by Jan Potworowski et.al. 2012.
     """
-    NAME = 'kcsd'
 
     def __init__(self, ele_pos, pots, **kwargs):
         super(KCSD, self).__init__(ele_pos, pots)
@@ -116,26 +96,6 @@ class KCSD(CSD):
         self.place_basis()
         self.create_src_dist_tables()
         self.method()
-        self.fitted = False
-
-    def __repr__(self):
-        msg = "{name}\nN. SRC:\t{n_src}" \
-                  "\nSOLVER:\t{solver}\nBASIS:\t{basis}\n"
-
-        if self.fitted:
-            msg += "ALPHA:\t{alpha}\nLAMBDA:\t{lambd}\nR:\t{r}"
-            return msg.format(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
-                              alpha=self.alpha, lambd=self.lambd, basis=self.src_type, r=self.R)
-
-        return msg.format(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
-                          basis=self.src_type)
-
-    def get_params(self):
-        if self.fitted:
-            return dict(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
-                        alpha=self.alpha, lambd=self.lambd, basis=self.src_type, r=self.R)
-        return dict(name=self.NAME.upper(), n_src=self.n_src, solver=self.solver,
-                    basis=self.src_type)
 
     def parameters(self, **kwargs):
         """Defining the default values of the method passed as kwargs
@@ -144,40 +104,17 @@ class KCSD(CSD):
         **kwargs
             Same as those passed to initialize the Class
         """
-        self.parallel = kwargs.pop('parallel', False)
-        if self.parallel:
-            try:
-                try:
-                    from joblib.parallel import Parallel, delayed
-                except ImportError:
-                    from sklearn.externals.joblib import Parallel, delayed
-            except ImportError:
-                self.parallel = False
-                warnings.warn("joblib library is not available at the machine, "
-                              "falling back to sequential computing.", ImportWarning)
-        self.l1_ratios = kwargs.pop('l1_ratios', None)
-        self.alpha_eps = kwargs.pop('alpha_eps', 1e-3)
-        self.n_alphas = kwargs.pop('n_alphas', 15)
-        self.n_lambdas = kwargs.pop('n_lambdas', 15)
-        self.n_jobs = kwargs.pop('n_jobs', 4)
-        self.seed = kwargs.pop('seed', None)
-        self.selection = kwargs.pop('selection', 'cyclic')
-        self.verbose = kwargs.pop('verbose', False)
-        self.k_fold_split = kwargs.pop('k_fold', None)
         self.src_type = kwargs.pop('src_type', 'gauss')
+        self.n_jobs = kwargs.pop('n_jobs', 4)
         self.sigma = kwargs.pop('sigma', 1.0)
         self.h = kwargs.pop('h', 1.0)
-        self.csd_at = kwargs.pop('csd_at', None)
         self.n_src_init = kwargs.pop('n_src_init', 1000)
         self.lambd = kwargs.pop('lambd', 0.0)
+        self.R_init = kwargs.pop('R_init', 0.1)
         self.ext_x = kwargs.pop('ext_x', 0.0)
         self.xmin = kwargs.pop('xmin', np.min(self.ele_pos[:, 0]))
         self.xmax = kwargs.pop('xmax', np.max(self.ele_pos[:, 0]))
         self.gdx = kwargs.pop('gdx', 0.01 * (self.xmax - self.xmin))
-        self.max_iters = kwargs.pop('max_iters', 1000)
-        self.tol = kwargs.pop('tol', 1e-4)
-        self.alpha = kwargs.pop('alpha', 0.0)
-        self.solver = kwargs.pop('solver', 'ridge')
         if self.dim >= 2:
             self.ext_y = kwargs.pop('ext_y', 0.0)
             self.ymin = kwargs.pop('ymin', np.min(self.ele_pos[:, 1]))
@@ -188,25 +125,8 @@ class KCSD(CSD):
             self.zmin = kwargs.pop('zmin', np.min(self.ele_pos[:, 2]))
             self.zmax = kwargs.pop('zmax', np.max(self.ele_pos[:, 2]))
             self.gdz = kwargs.pop('gdz', 0.01 * (self.zmax - self.zmin))
-
-        self.validate_R(kwargs.pop('Rs', 0.23))
         if kwargs:
             raise TypeError('Invalid keyword arguments:', kwargs.keys())
-
-    def validate_R(self, Rs):
-        if isinstance(Rs, float):
-            self.all_R = [[Rs]]
-
-        elif isinstance(Rs, (list, np.ndarray)):
-            self.all_R = [x if isinstance(x, Iterable) else [x] for x in Rs]
-
-        else:
-            raise TypeError
-
-        self.R = self.all_R[0]
-        self.R_init = self.all_R[0]
-        self.R_max = max(self.R)
-        self.n_rs = len(self.R)
 
     def method(self):
         """Actual sequence of methods called for KCSD
@@ -236,18 +156,14 @@ class KCSD(CSD):
         """
         xs = np.logspace(0., np.log10(self.dist_max + 1.), dist_table_density)
         xs = xs - 1.0  # starting from 0
-        dist_table = np.zeros((len(self.R), len(xs)))
-
-        self.interpolate_pot_at = []
-        for j, r in enumerate(self.R):
-            for i, pos in enumerate(xs):
-                dist_table[j, i] = self.forward_model(pos,
-                                                      r,
-                                                      self.h,
-                                                      self.sigma,
-                                                      self.basis)
-            self.interpolate_pot_at.append(interpolate.interp1d(xs, dist_table[j, :],
-                                                                kind='cubic'))
+        dist_table = np.zeros(len(xs))
+        for i, pos in enumerate(xs):
+            dist_table[i] = self.forward_model(pos,
+                                               self.R,
+                                               self.h,
+                                               self.sigma,
+                                               self.basis)
+        self.interpolate_pot_at = interpolate.interp1d(xs, dist_table, kind='cubic')
 
     def update_b_pot(self):
         """Updates the b_pot  - array is (#_basis_sources, #_electrodes)
@@ -261,10 +177,9 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.b_pot = np.vstack((self.interpolate_pot_at[i](self.src_ele_dists) for i in range(self.n_rs)))
+        self.b_pot = self.interpolate_pot_at(self.src_ele_dists)
         self.k_pot = np.dot(self.b_pot.T, self.b_pot)  # K(x,x') Eq9,Jan2012
         self.k_pot /= self.n_src
-        # self.k_pot = np.matrix(self.k_pot)
 
     def update_b_src(self):
         """Updates the b_src in the shape of (#_est_pts, #_basis_sources)
@@ -277,7 +192,8 @@ class KCSD(CSD):
         ----------
         None
         """
-        self.b_src = np.hstack((self.basis(self.src_estm_dists, r).T for r in self.R))
+        self.b_src = self.basis(self.src_estm_dists, self.R).T
+        #        print('b_src',np.shape(self.b_src))
         self.k_interp_cross = np.dot(self.b_src, self.b_pot)  # K_t(x,y) Eq17
         self.k_interp_cross /= self.n_src
 
@@ -291,16 +207,15 @@ class KCSD(CSD):
         ----------
         None
         """
-        # print('SHAPES IN B_INTERP: ', [x.shape for x in z])
-        self.b_interp_pot = np.vstack((self.interpolate_pot_at[i](self.src_estm_dists) for i in range(self.n_rs))).T
+        self.b_interp_pot = self.interpolate_pot_at(self.src_estm_dists).T
         self.k_interp_pot = np.dot(self.b_interp_pot, self.b_pot)
         self.k_interp_pot /= self.n_src
 
-    def values(self, estimate='CSD', lasso_reg=None, ridge_reg=None):
+    def values(self, estimate='CSD'):
         """Computes the values of the quantity of interest
 
         Parameters
-        ----------
+        ----------o
         estimate : 'CSD' or 'POT'
             What quantity is to be estimated
             Defaults to 'CSD'
@@ -315,27 +230,15 @@ class KCSD(CSD):
         elif estimate == 'POT':
             estimation_table = self.k_interp_pot
         else:
-            raise NameError('Invalid quantity to be measured, pass either CSD or POT')
-
-        if not self.fitted:
-            raise utils.NotFittedError("You are trying to get optimal values without "
-                                       "having found optimal hyperparameters (lambda, alpha)")
-
+            print('Invalid quantity to be measured, pass either CSD or POT')
+        k_inv = np.linalg.inv(self.k_pot + self.lambd *
+                              np.identity(self.k_pot.shape[0]))
         estimation = np.zeros((self.n_estm, self.n_time))
-        if lasso_reg is None:
-            lasso_reg = self.alpha
-
-        if ridge_reg is None:
-            ridge_reg = self.lambd
-
         for t in range(self.n_time):
-            beta = solvers[self.solver](self.k_pot, self.pots[:, t],
-                                        lasso_reg=lasso_reg, ridge_reg=ridge_reg,
-                                        max_iters=self.max_iters, tol=self.tol,
-                                        selection=self.selection)
+            beta = np.dot(k_inv, self.pots[:, t])
+            #            print('K: ',np.shape(self.k_pot),'K_tilde: ', np.shape(estimation_table), 'beta: ', np.shape(beta))
             for i in range(self.n_ele):
-                estimation[:, t] += estimation_table[:, i] * beta[i]
-
+                estimation[:, t] += estimation_table[:, i] * beta[i]  # C*(x) Eq 18
         return self.process_estimate(estimation)
 
     def process_estimate(self, estimation):
@@ -367,10 +270,8 @@ class KCSD(CSD):
         R : float
         """
         self.R = R
-        self.R_max = max(self.R)
-        self.n_rs = len(self.R)
         self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R_max
+                            np.max(self.src_estm_dists)) + self.R
         self.method()
 
     def update_lambda(self, lambd):
@@ -380,138 +281,63 @@ class KCSD(CSD):
         ----------
         lambd : float
         """
-        self._lambd = lambd
+        self.lambd = lambd
 
-    def update_alpha(self, alpha):
-        self._alpha = alpha
-
-    @property
-    def lambd(self):
-        if not self.fitted:
-            raise utils.NotFittedError
-        return self._lambd
-
-    @lambd.setter
-    def lambd(self, val):
-        self._lambd = val
-
-    @property
-    def alpha(self):
-        if not self.fitted:
-            raise utils.NotFittedError
-        return self._alpha
-
-    @alpha.setter
-    def alpha(self, val):
-        self._alpha = val
-
-    def cross_validate(self, lambdas=None, Rs=None, alphas=None, param_search='grid'):
+    def cross_validate(self, lambdas=None, Rs=None):
         """Method defines the cross validation.
-        By default only cross_validates over lambda and alpha,
+        By default only cross_validates over lambda,
         When no argument is passed, it takes
         lambdas = np.logspace(-2,-25,25,base=10.)
         and Rs = np.array(self.R).flatten()
         otherwise pass necessary numpy arrays
 
-        Lambda and alpha are respectively L2 and L1 regularization parameters.
-
-        TODO: allow to do random search instead of grid search
-
         Parameters
         ----------
-        lambdas : np.ndarray
-        Rs : np.ndarray
-        alphas : np.ndarray
+        lambdas : numpy array
+        Rs : numpy array
 
         Returns
         -------
         R : post cross validation
         Lambda : post cross validation
-        Alpha : post cross validation
         """
         if lambdas is None:  # when None
             print('No lambda given, using defaults')
-            # lambdas = np.logspace(-2, -25, self.n_lambdas, base=10.)  # Default multiple lambda
-            # lambdas = np.hstack((lambdas, np.array([0.0])))
-            s = np.linalg.svd(self.k_pot)[1] # we are interested in singular value matrix only
-            ssq = s*s
-            lambdas = np.logspace(np.log10(ssq.min()) - 3, np.log10(ssq.max())+3, num=self.n_lambdas)
-            lambdas = np.hstack((lambdas, [0.]))
+            lambdas = np.logspace(-2, -25, 25, base=10.)  # Default multiple lambda
+            lambdas = np.hstack((lambdas, np.array((0.0))))
         elif lambdas.size == 1:  # resize when one entry
             lambdas = lambdas.flatten()
-
-        if self.solver == 'elasticnet':
-            if alphas is None:
-                print('No alpha given, using defaults')
-                alphas = np.logspace(-2, -25, self.n_alphas, base=10.)
-                alphas = np.hstack((alphas, np.array([0.0])))
-            elif alphas.size == 1:
-                alphas = alphas.flatten()
-
-            lambdas = self.n_ele * lambdas
-            alphas = self.n_ele * alphas
-        else:
-            alphas = np.array([0.0])
-
         if Rs is None:  # when None
-            Rs = np.array(self.all_R)  # Default over one R value
-        # errs = np.zeros((Rs.size, lambdas.size, alphas.size))
-        # index_generator = []
-        # for ii in range(self.n_ele):
-        #     idx_test = [ii]
-        #     idx_train = list(range(self.n_ele))
-        #     idx_train.remove(ii)  # Leave one out
-        #     index_generator.append((idx_train, idx_test))
-
-        if self.parallel:
-            errs = []
-            for r in Rs:
-                print("Cross validating R: ", r)
-                self.update_R(r)
-                one_search_errs = parallel_search(X=self.k_pot.copy(),
-                                                  y=self.pots.copy(),
-                                                  K=self.k_fold_split,
-                                                  alphas=alphas,
-                                                  lambdas=lambdas,
-                                                  solver=self.solver,
-                                                  method=self.NAME,
-                                                  n_jobs=self.n_jobs)
-                errs.append(one_search_errs)
-            errs = np.concatenate(errs, axis=0)
-        else:
-            errs = self.compute_cverror_sequentially(Rs, lambdas, alphas)
-
+            Rs = np.array((self.R)).flatten()  # Default over one R value
+        errs = np.zeros((Rs.size, lambdas.size))
+        index_generator = []
+        for ii in range(self.n_ele):
+            idx_test = [ii]
+            idx_train = list(range(self.n_ele))
+            idx_train.remove(ii)  # Leave one out
+            index_generator.append((idx_train, idx_test))
+        for R_idx, R in enumerate(Rs):  # Iterate over R
+            self.update_R(R)
+            print('Cross validating R (all lambda) :', R)
+            for lambd_idx, lambd in enumerate(lambdas):  # Iterate over lambdas
+                errs[R_idx, lambd_idx] = self.compute_cverror(lambd,
+                                                              index_generator)
         err_idx = np.where(errs == np.min(errs))  # Index of the least error
-        print(err_idx)
-        cv_R = Rs[err_idx[0]][0]  # First occurence of the least error's
+        cv_R = Rs[err_idx[0]][0]  # First occurance of the least error's
         cv_lambda = lambdas[err_idx[1]][0]
-        cv_alpha = alphas[err_idx[2]][0]
         self.cv_error = np.min(errs)  # otherwise is None
         self.update_R(cv_R)  # Update solver
         self.update_lambda(cv_lambda)
-        self.update_alpha(cv_alpha)
-        self.fitted = True
-        self.cv_errors_history = errs
+        print('R, lambda :', cv_R, cv_lambda)
+        return cv_R, cv_lambda
 
-        return self
-        # if self.solver == 'ridge':
-        #     print('R, lambda :', cv_R, cv_lambda)
-        #     return cv_R, cv_lambda
-        # elif self.solver == 'elasticnet':
-        #     print('R, lambda, alpha :', cv_R, cv_lambda, cv_alpha)
-        #     return cv_R, cv_lambda, cv_alpha
-        # else:
-        #     print('R, alpha : ', cv_R, cv_alpha)
-        #     return cv_R, cv_alpha
-
-    def compute_cverror(self, lambd, alpha):
+    def compute_cverror(self, lambd, index_generator):
         """Useful for Cross validation error calculations
 
         Parameters
         ----------
         lambd : float
         index_generator : list
-        alpha : float
 
         Returns
         -------
@@ -519,108 +345,125 @@ class KCSD(CSD):
             the sum of the error computed.
         """
         err = 0
-        for idx_train, idx_test in kfold(self.k_pot.shape[0], self.k_fold_split):
+        for idx_train, idx_test in index_generator:
             B_train = self.k_pot[np.ix_(idx_train, idx_train)]
             V_train = self.pots[idx_train]
             V_test = self.pots[idx_test]
             I_matrix = np.identity(len(idx_train))
             B_new = np.matrix(B_train) + (lambd * I_matrix)
             try:
-                beta_new = solvers[self.solver](np.matrix(B_new), np.matrix(V_train),
-                                                ridge_reg=lambd, lasso_reg=alpha,
-                                                tol=self.tol, max_iters=self.max_iters)
-                # beta_new = np.dot(np.matrix(B_new).I, np.matrix(V_train))
+                beta_new = np.dot(np.matrix(B_new).I, np.matrix(V_train))
+                #                print('beta_cv:',np.shape(beta_new))
                 B_test = self.k_pot[np.ix_(idx_test, idx_train)]
                 V_est = np.zeros((len(idx_test), self.pots.shape[1]))
                 for ii in range(len(idx_train)):
                     for tt in range(self.pots.shape[1]):
                         V_est[:, tt] += beta_new[ii, tt] * B_test[:, ii]
-                err += np.linalg.norm(V_est - V_test)  #np.square(V_est - V_test).sum()
+                err += np.linalg.norm(V_est - V_test)
             except LinAlgError:
-                raise LinAlgError('Encoutered Singular Matrix Error:'
-                                  'try changing ele_pos slightly')
+                raise LinAlgError('Encoutered Singular Matrix Error: try changing ele_pos slightly')
         return err
 
-    def compute_cverror_sequentially(self, Rs, lambdas, alphas):
+    def triangle_area(self, x1, y1, x2, y2, x3, y3):
+        '''Method to estimate triangle area
+        Parameters
+        ----------
+        coordiantes of the apex of the triangle x1,y1,...
 
-        # thresh = .1
-        errs = np.zeros((len(Rs), lambdas.size, alphas.size))
-        for R_idx, R in enumerate(Rs):  # Iterate over R
-            print('Cross validating R (all lambda) :', R)
-            self.update_R(R)
-            for lambd_idx, lambd in enumerate(lambdas):  # Iterate over lambdas
-                for alpha_idx, alpha in enumerate(alphas): # Iterate over alphas
-                    errs[R_idx, lambd_idx, alpha_idx] = self.compute_cverror(lambd,
-                                                                             alpha)
-        return errs
+        Returns
+        ----------
+        Area of the triangle
+        '''
+        return (0.5 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)))
 
-    def assess_model(self, beta, v_true):
+    def L_fit(self, estimate='CSD', ploting=True, lambdas=None, Rs=None, paral=False):
+        """Method defines the L-curve.
+        By default calculates L-curve over lambda,
+        When no argument is passed, it takes
+        lambdas = np.logspace(-10,-1,100,base=10)
+        and Rs = np.array(self.R).flatten()
+        otherwise pass necessary numpy arrays
 
-        beta = beta.reshape(-1, 1)
-        v_pred = np.matmul(self.k_pot, beta)
-        errs = np.square(v_pred - v_true).sum()
-        modelnorm = np.einsum('ij,ji->i', beta.T, v_pred)
-        modelnorm = np.linalg.norm(modelnorm)
-        return modelnorm, errs
+        Parameters
+        ----------
+        L-curve plotting: default True
+        lambdas : numpy array
+        Rs : numpy array
 
-    def fit_lcurve(self, sentinel=None, alphas=None, Rs=None, lambdas=None):
-
-        solv_fn = solvers[self.solver]
-        if sentinel is not None:
-            raise TypeError
-
-        if self.solver == 'elasticnet':
-            raise NotImplementedError("L-Curve for ElasticNet in KCSD is not implemented yet")
-
-        if self.solver == 'lasso':
-            M = len(alphas)
-            residuals, norms = np.zeros(M), np.zeros(M)
-            for idx, alpha in enumerate(alphas):
-
-                for t in range(self.n_time):
-                    beta = solv_fn(self.k_pot, self.pots[:, t],
-                                   lasso_reg=alpha,
-                                   ridge_reg=0,
-                                   max_iters=self.max_iters,
-                                   tol=self.tol)
-
-                    mnorm, resid = self.assess_model(beta, self.pots[:, t])
-                    residuals[idx] += resid
-                    norms[idx] += mnorm
-
-        elif self.solver in ['ridge', 'kernel_ridge']:
-            M = len(lambdas)
-            residuals, norms = np.zeros(M), np.zeros(M)
-            for idx, lambd in enumerate(lambdas):
-
-                for t in range(self.n_time):
-                    beta = solv_fn(self.k_pot, self.pots[:, t], lasso_reg=0, ridge_reg=lambd)
-                    mnorm, resid = self.assess_model(beta, self.pots[:, t])
-
-                    residuals[idx] += resid
-                    norms[idx] += mnorm
-
+        Returns
+        -------
+        Lambda : post cross validation
+        L-curve: list
+        residuals of the model: list
+        norm of the model: list
+        """
+        u, s, v = svd(self.k_pot)
+        print('min svd k_pot value', s[-1])
+        if lambdas is None:  # when None
+            print('No lambda given, using defaults')
+            s = np.linalg.svd(self.k_pot)[1] # we are interested in singular value matrix only
+            ssq = s*s
+            lambdas = np.logspace(np.log10(ssq.min()) - 3, np.log10(ssq.max())+3, num=self.n_lambdas)
+        else:  # resize when one entry
+            lambdas = lambdas.flatten()
+        if Rs is None:
+            R = np.array((self.R)).flatten()
         else:
-            raise ValueError
+            R = np.array((Rs)).flatten()
+        self.update_R(R)
 
-        norms = np.log(norms + np.finfo(np.float64).eps)
-        resids = np.log(residuals + np.finfo(np.float64).eps)
+        modelnormseq = np.zeros(len(lambdas))
+        residualseq = np.zeros(len(lambdas))
+        curveseq = np.zeros(len(lambdas))
 
-        self.lcurve_norms = norms
-        self.lcuver_resids = resids
-
-        areas = resids[0] * (norms - norms[-1]) + resids * (norms[-1] - norms[0]) + resids[-1] * (norms[0] - norms)
-
-        self.fitted = True
-
-        if self.solver == 'lasso':
-            self.update_lambda(0)
-            self.update_alpha(alphas[areas.argmax()])
-        elif self.solver.endswith('ridge'):
-            self.update_alpha(0)
-            self.update_lambda(lambdas[areas.argmax()])
+        print('k_pot_diag values mean: ', str.format('{0:.5f}', np.diag(self.k_pot)[0]))
+        print('calc_lcurve:')
+        # paral = True
+        if paral:
+            modelnormseq, residualseq = utils.parallel_search(self.k_pot, self.pots, lambdas,
+                                                              n_jobs=self.n_jobs)
         else:
-            raise NotImplementedError
+            for index, lamb in enumerate(lambdas):
+
+                k_inv = np.linalg.inv(self.k_pot + lamb *
+                                      np.identity(self.k_pot.shape[0]))
+                V_est = np.zeros((np.shape(self.k_pot)[0], self.n_time))
+
+                beta_new = np.dot(k_inv, self.pots)
+                modelnorm = np.zeros(self.n_time)
+                for ii in range(self.n_ele):
+                    for tt in range(self.n_time):
+                        V_est[:, tt] += beta_new[ii, tt] * self.k_pot[:, ii]
+                for jj in range(self.n_ele):
+                    for tt in range(self.n_time):
+                        modelnorm[tt] += beta_new[jj, tt] * V_est[jj, tt]
+
+                        #                sys.stdout.write("\r" + str(int(100/len(lambdas))*(index+1)) + " % done")
+                        #                sys.stdout.flush()
+                residual = np.linalg.norm(V_est - self.pots)
+                modelnorm = np.linalg.norm(modelnorm)
+                modelnormseq[index] = modelnorm
+                residualseq[index] = residual
+
+        norm_log = np.log(modelnormseq + np.finfo(np.float64).eps)
+        res_log = np.log(residualseq + np.finfo(np.float64).eps)
+        print('norm_log: ', np.shape(norm_log))
+
+        for i, lamb in enumerate(lambdas):
+            curveseq[i] = self.triangle_area(res_log[0], norm_log[0], res_log[i],
+                                             norm_log[i], res_log[-1], norm_log[-1])
+        imax = np.argmax(curveseq)
+        L_lambda = lambdas[imax]
+        print("Best lambda and R = ", L_lambda, ', ', R)
+        if ploting:
+            utils.plot_lcurve(residualseq, modelnormseq, imax, curveseq, lambdas, R)
+        self.update_lambda(L_lambda)
+
+        self.norms = modelnormseq
+        self.resids = residualseq
+
+        return L_lambda, curveseq, res_log, norm_log
+
 
 class KCSD1D(KCSD):
     """KCSD1D - The 1D variant for the Kernel Current Source Density method.
@@ -736,8 +579,7 @@ class KCSD1D(KCSD):
         est_loc = est_loc.reshape((len(est_loc), 1))
         self.src_ele_dists = distance.cdist(src_loc, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc, est_loc, 'euclidean')
-        self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R_max
+        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions
@@ -892,17 +734,12 @@ class KCSD2D(KCSD):
         except KeyError:
             raise KeyError('Invalid source_type for basis! available are:',
                            basis.basis_2D.keys())
-        if self.csd_at is None:
-            (self.src_x, self.src_y, self.R) = utils.distribute_srcs_2D(self.estm_x,
-                                                                        self.estm_y,
-                                                                        self.n_src_init,
-                                                                        self.ext_x,
-                                                                        self.ext_y,
-                                                                        self.R_init)
-        else:
-            self.src_x = self.csd_at[0, :, :]
-            self.src_y = self.csd_at[1, :, :]
-            self.R = self.R_init
+        (self.src_x, self.src_y, self.R) = utils.distribute_srcs_2D(self.estm_x,
+                                                                    self.estm_y,
+                                                                    self.n_src_init,
+                                                                    self.ext_x,
+                                                                    self.ext_y,
+                                                                    self.R_init)
         self.n_src = self.src_x.size
         self.nsx, self.nsy = self.src_x.shape
 
@@ -917,7 +754,7 @@ class KCSD2D(KCSD):
         est_loc = np.array((self.estm_x.ravel(), self.estm_y.ravel()))
         self.src_ele_dists = distance.cdist(src_loc.T, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc.T, est_loc.T, 'euclidean')
-        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R_max
+        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions
@@ -1162,8 +999,7 @@ class KCSD3D(KCSD):
         LinAlgError
             Could not invert the matrix, try changing the ele_pos slightly
         KeyError
-            Basis function (src_type) not implemented.
-            See basis_functions.py for available
+            Basis function (src_type) not implemented. See basis_functions.py for available
         """
         super(KCSD3D, self).__init__(ele_pos, pots, **kwargs)
 
@@ -1235,8 +1071,7 @@ class KCSD3D(KCSD):
                             self.estm_z.ravel()))
         self.src_ele_dists = distance.cdist(src_loc.T, self.ele_pos, 'euclidean')
         self.src_estm_dists = distance.cdist(src_loc.T, est_loc.T, 'euclidean')
-        self.dist_max = max(np.max(self.src_ele_dists),
-                            np.max(self.src_estm_dists)) + self.R_max
+        self.dist_max = max(np.max(self.src_ele_dists), np.max(self.src_estm_dists)) + self.R
 
     def forward_model(self, x, R, h, sigma, src_type):
         """FWD model functions
@@ -1367,13 +1202,13 @@ if __name__ == '__main__':
     pots = np.array([[-1], [-1], [-1], [0], [0], [1], [-1.5]])
     k = KCSD1D(ele_pos, pots,
                gdx=0.01, n_src_init=300,
-               ext_x=0.0, src_type='gauss', reg_method='elasticnet', max_iters=2)
+               ext_x=0.0, src_type='gauss')
     k.cross_validate()
-    # print(k.values())
+    print(k.values())
 
     print('Checking 2D')
-    ele_pos = np.array([[-0.2, -0.2], [0, 0], [0, 1], [1, 0], [1, 1],
-                        [0.5, 0.5], [1.2, 1.2]])
+    ele_pos = np.array([[-0.2, -0.2], [0, 0], [0, 1], [1, 0], [1, 1], [0.5, 0.5],
+                        [1.2, 1.2]])
     pots = np.array([[-1], [-1], [-1], [0], [0], [1], [-1.5]])
     k = KCSD2D(ele_pos, pots,
                gdx=0.05, gdy=0.05,
@@ -1381,7 +1216,7 @@ if __name__ == '__main__':
                ymin=-2.0, ymax=2.0,
                src_type='gauss')
     k.cross_validate()
-    # print(k.values())
+    print(k.values())
 
     print('Checking MoIKCSD')
     k = MoIKCSD(ele_pos, pots,
@@ -1399,4 +1234,5 @@ if __name__ == '__main__':
                gdx=0.02, gdy=0.02, gdz=0.02,
                n_src_init=1000, src_type='gauss_lim')
     k.cross_validate()
-    # print(k.values())
+    print(k.values())
+

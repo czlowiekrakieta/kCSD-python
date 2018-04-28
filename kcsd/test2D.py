@@ -33,10 +33,10 @@ def gaussian_monopole(ampl=None, angle=None, varx=None, vary=None):
     return true_csd, (xx, yy)
 
 
-def gaussian_dipole(ampl=None, angle=None, varx=None, vary=None):
-    for z in [ampl, angle, varx, vary]:
-        if z is not None and not (isinstance(z, (list, np.ndarray)) and len(z) == 2 and all([0 < x < 1 for x in z])):
-            raise ValueError
+def gaussian_dipole(ampl=None, angle=None, varx=None, vary=None, rbase=None):
+    for j, z in enumerate([ampl, angle, varx, vary, rbase]):
+        if z is not None and not (isinstance(z, (list, np.ndarray)) and len(z) == 2 and all([0 <= x <= 1 for x in z])):
+            raise ValueError("fuckup at ", j)
 
     s = np.random.uniform(size=(2, 5))
     if ampl is not None:
@@ -47,12 +47,14 @@ def gaussian_dipole(ampl=None, angle=None, varx=None, vary=None):
         s[:, 3] = varx
     if vary is not None:
         s[:, 4] = vary
+    if rbase is not None:
+        s[:, 1] = rbase
 
     if s[0, 2]*s[1, 2] > 0:
         s[0, 2] *= -1
 
-    states = [((-1, 1), CovData(s[0, :])),
-              ((1, -1), CovData(s[1, :]))]
+    states = [((-1, 0), CovData(s[0, :])),
+              ((1, 0), CovData(s[1, :]))]
     true_csd = add_2d_gaussians(xx, yy, states)
     return true_csd, (xx, yy)
 
@@ -156,7 +158,29 @@ def neuron():
     return true_csd_neur, (xxn, yyn)
 
 
+def two_sinks(q=1):
+    locs = [(-1, 0), (0, 0), (1, 0)]
+    arr = [np.array([0, 1, 0, 0, 0]) for x in range(3)]
+    arr[0][2] = q
+    covs = [CovData(arr[x]) for x in range(3)]
+
+    csd = add_2d_gaussians(xx, yy, zip(locs, covs))
+    return csd, (xx, yy)
+
+
+def linear_quadrupole(q=1):
+    locs = [(-1, 0), (0, 0), (1, 0)]
+    arr = np.array([0, 1, -q, 0, 0])
+    covs = [CovData(arr) for x in range(3)]
+    covs[1].amplitude = 2*q
+
+    csd = add_2d_gaussians(xx, yy, zip(locs, covs))
+    return csd, (xx, yy)
+
+
 zoo = {
+    'two_sinks': two_sinks,
+    'linear_quadrupole': linear_quadrupole,
     'neuron': neuron,
     'straight': straight_line,
     'dipole': gaussian_dipole,

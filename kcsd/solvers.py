@@ -283,7 +283,7 @@ def parallel_search(X, y, K, alphas, lambdas, solver, n_jobs=4, method='kcsd'):
     return errs
 
 
-def lcurve_path(X, y, l1_ratio, alphas, debug=False):
+def lcurve_path(X, y, l1_ratio, alphas, gram_matrix):
     N = X.shape[0]
     A = alphas.shape[0]
 
@@ -300,7 +300,7 @@ def lcurve_path(X, y, l1_ratio, alphas, debug=False):
 
     for i, (l1, l2) in enumerate(zip(l1_regs, l2_regs)):
         beta = cd_fast.enet_coordinate_descent(beta, l1, l2, X, y, 1000, 1e-4, rng, True, 0)[0]
-        norms[i] = np.linalg.norm(beta)
+        norms[i] = beta.T @ gram_matrix @ beta
         resids[i] = np.linalg.norm(np.matmul(X, beta) - y)
 
     norms = np.log(norms + np.finfo(np.float64).eps)
@@ -308,10 +308,7 @@ def lcurve_path(X, y, l1_ratio, alphas, debug=False):
 
     areas = resids[0] * (norms - norms[-1]) + resids * (norms[-1] - norms[0]) + resids[-1] * (norms[0] - norms)
 
-    if debug:
-        return areas, norms, resids
-
-    return alphas[areas.argmax()]
+    return areas, norms, resids
 
 
 def regularization_path(X, y, alphas=None, n_alphas=100, cv=False, method='lasso'):

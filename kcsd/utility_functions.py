@@ -15,6 +15,11 @@ from __future__ import division
 import numpy as np
 from scipy import interpolate
 from collections import namedtuple
+import matplotlib.pyplot as plt
+try:
+    from joblib.parallel import Parallel, delayed
+except ImportError:
+    from sklearn.externals.joblib import Parallel, delayed
 
 
 class NotFittedError(Exception):
@@ -255,7 +260,7 @@ class CovData:
     Wrapper used for building covariance matrix from set of random numbers.
 
     """
-    def __init__(self, arr, resample=True):
+    def __init__(self, arr, resample=True, print_init=True):
         """
         arr = [angle, rmin, amplitude, sigma_x, sigma_y]
 
@@ -263,6 +268,7 @@ class CovData:
         :param resample:
         """
         self.cov = np.eye(2)
+        self.pi = print_init
         if len(arr.shape) == 1:
             retry = True
             self.trials = 0
@@ -327,10 +333,84 @@ class CovData:
 csd_tuple = namedtuple('csd_tuple', ['real_states', 'fitting_states', 'kcsd', 'k_matrix', 'errors', 'potentials', 'real_csd', 'xx', 'yy'])
 
 
-def plot_csd_2D(xx, yy, true_csd, levels=20):
+def plot_csd_2D(xx, yy, true_csd, levels=20, cmap='csd'):
     import matplotlib.pyplot as plt
     import matplotlib.cm as cm
-    t_max = np.max(np.abs(true_csd))
-    t_max += t_max/1000
-    levels = np.linspace(-t_max, t_max, num=20)
+
+    if true_csd.ndim == 3:
+        true_csd = true_csd[:, :, 0]
+
+    if isinstance(levels, int):
+        t_max = np.max(np.abs(true_csd))
+        t_max += t_max/1000
+        levels = np.linspace(-t_max, t_max, num=levels)
+    elif isinstance(levels, np.ndarray):
+        levels = levels.ravel()
+    else:
+        raise TypeError
+
+    if cmap.lower() == 'csd':
+        cmap = cm.bwr_r
+    elif cmap.lower() == 'pot':
+        cmap = cm.viridis
     plt.contourf(xx, yy, true_csd, levels=levels, cmap=cm.bwr_r)
+
+
+def L_model_fast(k_pot, pots, lamb, i):
+    k_inv = np.linalg.inv(k_pot + lamb *
+                          np.identity(k_pot.shape[0]))
+
+    beta_new = np.dot(k_inv, pots)
+    V_est = np.dot(k_pot, beta_new)
+    modelnorm = np.einsum('ij,ji->i', beta_new.T, V_est)
+    residual = np.linalg.norm(V_est - pots)
+    modelnorm = np.linalg.norm(modelnorm)
+    return modelnorm, residual
+
+
+def parallel_search(k_pot, pots, lambdas, n_jobs=4):
+    jobs = (delayed(L_model_fast)(k_pot, pots, lamb, i)
+            for i, lamb in enumerate(lambdas))
+
+    modelvsres = Parallel(n_jobs=n_jobs, backend='threading')(jobs)
+    modelnormseq, residualseq = zip(*modelvsres)
+    return modelnormseq, residualseq
+
+
+def plot_lcurve(residualseq, modelnormseq, imax, curveseq, lambdas, R):
+    '''Method for plotting L-curve and triangle areas
+    Parameters
+    ----------
+    residualseq: from L_fit
+    modelnormseq: from L_fit
+    imax: point index for maximum triangle area
+    curveseq: from L_fit - triangle areas
+    Lambdas: lambda vector
+    R: Radius of basis source
+
+    Shows
+    ----------
+    Two Plots
+    '''
+    fig_L = plt.figure()
+    ax_L = fig_L.add_subplot(121)
+    plt.title('ind_max :' + str(np.round(lambdas[imax], 8)) + ' R: ' + str(R))
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.ylabel("Norm of Model", fontsize=20)
+    plt.xlabel("Norm of Prediction Error", fontsize=20)
+    ax_L.plot(residualseq, modelnormseq, marker=".", c="green")
+    ax_L.plot([residualseq[imax]], [modelnormseq[imax]], marker="o", c="red")
+
+    x = [residualseq[0], residualseq[imax], residualseq[-1]]
+    y = [modelnormseq[0], modelnormseq[imax], modelnormseq[-1]]
+    ax_L.fill(x, y, alpha=0.2)
+
+    ax2_L = fig_L.add_subplot(122)
+    plt.xscale('log')
+    plt.ylabel("Curvature", fontsize=20)
+    plt.xlabel("Norm of Prediction Error", fontsize=20)
+    ax2_L.plot(residualseq, curveseq, marker=".", c="green")
+    ax2_L.plot([residualseq[imax]], [curveseq[imax]], marker="o", c="red")
+
+    return
